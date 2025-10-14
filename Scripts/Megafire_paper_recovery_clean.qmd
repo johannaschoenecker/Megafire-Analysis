@@ -1,0 +1,2877 @@
+---
+title: "Megafires Recovery"
+format: html
+editor: visual
+---
+
+Code by Johanna Schönecker
+
+Edited 28th April 2025
+
+This quarto document contains code to load and pre-process pixel-, fire- and patch-level data for megafires in the Sierra Nevada ecoregion which burned between 1985 and 2023 and analyse recovery using the metrics of NDVI and vegetation type classification recovery.
+
+Different sections contain code to produce figures.
+
+```{r}
+library(tidyr)
+library(raster)
+library(rgdal)
+library(ggplot2)
+library(sp)
+library(sf)
+library(rgeos)
+library(reshape)
+library(gridExtra)
+library(patchwork)
+library(Rcpp)
+library(scales)
+library(dplyr)
+library(ggpubr)
+library(landscapemetrics)
+library(landscapetools)
+library(here)
+library(stringr)
+library(moments)
+library(reshape2)
+library(ggeasy)
+library(vctrs)
+library(mgcv)
+library(networkD3)
+library(ggridges)
+library(cowplot)
+library(factoextra)
+library(gdistance)
+library(fs)
+library(data.table)
+library(terra)
+```
+
+# Preliminary
+
+```{r}
+megafire_IDs <- c(5529, 5718, 5721, 8026, 7808, 7747, 7996, 7961, 
+                   7412, 7514, 7242, 9714, 9724, 9487, 8985, 9039, 
+                   8747, 10495, 10498, 10504, 10094, 10273, 1819, 1772, 
+                   2111, 2140, 1210, 1211, 1216, 1215, 1220, 1319, 
+                   1315, 718, 911, 932, 869, 888, 945, 959, 504, 
+                   3363, 3567, 3573, 3574, 3051, 3094, 3188, 2706, 
+                   2147, 2531, 2415, 2618, 5207, 5309, 4277, 4285, 
+                   4306, 4380, 4386, 4374, 4500, 3983, 3992)
+
+yrs_ids <- fread("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/Megafire_paper/yrs_ids.csv")
+
+OBJECTIDs <- yrs_ids$OBJECTID
+yrs <- yrs_ids$year
+
+SN_fires_attr_mega <- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/Megafire_paper/SN_megafires_1985_2023.csv", header=TRUE)
+```
+
+# Load Datasets
+
+```{r}
+############ Fire level ############
+
+
+fire_metrics_mega <- fread("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/Megafire_paper/SN_megafires_1985_2023.csv", header=TRUE)
+
+
+############ Patch level (rdnbr) ############
+patch_metrics_mega <- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/dataframes/Megafire_paper/SN_patch_metrics_mega_rdnbr_1985_2023.csv", header=TRUE)
+
+
+```
+
+
+
+# How much conifer forest transitioned
+
+```{r}
+
+library(data.table)
+library(dplyr)
+library(stringr)
+
+# Set directory
+directory <- "C:/Users/jscho/Documents/Megafires-1985-2023-Data/raster_df_mega"
+
+# List all csv files
+csv_files <- list.files(directory, pattern = "\\.csv$", full.names = TRUE)
+
+# Initialize an empty list to collect results
+results_list <- list()
+
+# Loop through each CSV
+for (file in csv_files) {
+  
+  # Read the CSV using fread (MUCH faster)
+  df <- fread(file, select = c("rdnbr_class", "RF_pre_veg", "transitioned"))
+  
+  # Filter for rdnbr_class == 3 and RF_pre_veg == 7
+  filtered_df <- df %>%
+    filter(rdnbr_class == 3, RF_pre_veg == 7)
+  
+  # Count where transitioned == 1
+  transitioned_count <- sum(filtered_df$transitioned == 1, na.rm = TRUE)
+  
+  # Extract filename without extension
+  filename_no_ext <- str_remove(basename(file), "\\.csv$")
+  
+  # Store results
+  results_list[[filename_no_ext]] <- data.frame(
+    Filename = filename_no_ext,
+    Transitioned_Count = transitioned_count
+  )
+}
+
+# Combine into one dataframe
+final_results <- bind_rows(results_list)
+
+final_results$transitioned_ha <- final_results$Transitioned_Count*0.09
+
+total_con_HS_trans <- sum(final_results$transitioned_ha)
+
+# Result: >516,000 ha of coniferous forest burned at high severity in megafires from 1985 to 2023 and transitioned to a different vegetation type
+```
+
+
+# Read in dfs for fires with 20 years post-fire
+
+```{r}
+############ Fires with at least 20 years post-fire vegetation data ###########
+
+# IDs of fires 1985-2002
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+
+# Directory containing the megafire pixel dataframes
+directory <- "C:/Users/jscho/Documents/Megafires-1985-2023-Data/raster_df_mega"
+
+# Get a list of all CSV files in the directory
+csv_files <- list.files(directory, pattern = "\\.csv$", full.names = TRUE)
+
+# Filter files whose filenames contain an ID from fire_IDs
+filtered_files <- csv_files[sapply(csv_files, function(x) {
+  any(fire_IDs %in% as.numeric(gsub("\\D", "", basename(x)))) # Extract numeric ID and check match
+})]
+
+# Initialize an empty list to store dataframes
+df_list <- list()
+
+# Read and store each matching dataframe
+for (file in filtered_files) {
+  df <- fread(file)
+  df_list[[file]] <- df
+}
+
+# Combine all dataframes into one
+pixel_df_mega20 <- bind_rows(df_list)
+
+# Only coniferous pixels
+pixel_df_mega20_con <- pixel_df_mega20 %>%
+  filter(RF_pre_veg==7)
+
+# Only coniferous pixels that burned at high severity
+pixel_df_mega20_conHS <- pixel_df_mega20_con %>%
+  filter(rdnbr_class==3)
+
+pixel_df_mega20_conHS_trans <- pixel_df_mega20_conHS %>%
+  filter(transitioned == 1)
+
+# Area of high sev coniferous forest transitioned to different veg class post-fire:
+count_trans <- nrow(pixel_df_mega20_conHS_trans)
+area_trans <- count_trans*0.09
+
+pixel_df_mega20_conHS_trans_noreturn <- pixel_df_mega20_conHS_trans %>%
+  filter(returned == 0)
+
+pixel_df_mega20_conHS_trans_returnlonger20yrs <- pixel_df_mega20_conHS_trans %>%
+  filter(yrs_to_return >19)
+
+count_noreturn <- count(pixel_df_mega20_conHS_trans_noreturn)
+count_longer20yrs <- count(pixel_df_mega20_conHS_trans_returnlonger20yrs)
+
+total_count_noreturn <- count_noreturn + count_longer20yrs
+total_area_noreturn <- total_count_noreturn*0.09
+
+prop_noreturn <- total_area_noreturn/area_trans
+
+```
+
+# Recovery: veg classification
+
+
+```{r}
+# Load required libraries
+library(terra)
+library(dplyr)
+
+# ------------------------------------------------------------------------------
+
+# Function to process a single fire's vegetation classification
+process_veg_class <- function(fire_id, fire_year, burn_severity_path, veg_folder_path) {
+  
+  # ----- Step 1: Load burn severity raster -----
+  burn_severity <- rast(burn_severity_path)
+  
+  # Create mask for high-severity burns (value = 3)
+  high_severity <- burn_severity == 3
+  
+  # ----- Step 2: Load pre-fire vegetation raster -----
+  pre_fire_path <- paste0(veg_folder_path, "/", fire_year - 1, "_Mega_", fire_id, ".tif")
+  
+  if (!file.exists(pre_fire_path)) {
+    cat("Pre-fire vegetation raster not found for Fire ID:", fire_id, "\n")
+    return(NULL)
+  }
+  
+  pre_fire_veg_class <- rast(pre_fire_path) |>
+    crop(burn_severity) |>
+    resample(burn_severity, method = "near")
+  
+  # ----- Step 3: Create combined mask (high severity *and* coniferous) -----
+  coniferous <- pre_fire_veg_class == 7
+  base_mask <- high_severity & coniferous
+  
+  # Skip if no valid pixels
+  if (global(base_mask, fun = "sum", na.rm = TRUE)[,1] == 0) {
+    cat("No valid high-severity coniferous pixels for Fire ID:", fire_id, "\n")
+    return(NULL)
+  }
+  
+  # ----- Step 4: Initialize output container -----
+  veg_proportions <- list()
+  
+  # ----- Step 5: Loop over years (-3 prefire to +20 postfire) -----
+  years <- (fire_year - 3):(fire_year + 20)
+  
+  for (year in years) {
+    veg_path <- paste0(veg_folder_path, "/", year, "_Mega_", fire_id, ".tif")
+    
+    if (!file.exists(veg_path)) {
+      cat("File not found for year:", year, "\n")
+      next
+    }
+    
+    veg_class <- rast(veg_path) |>
+      crop(burn_severity) |>
+      resample(burn_severity, method = "near")
+    
+    # Apply the conifer/high-severity mask
+    valid_pixels <- veg_class[base_mask]
+    total_pixels <- length(valid_pixels)
+    veg_pixels <- sum(valid_pixels == 7, na.rm = TRUE)  # Count coniferous pixels
+    
+    # Calculate proportion of coniferous pixels
+    proportion <- ifelse(total_pixels > 0, veg_pixels / total_pixels, NA)
+    
+    # Save results for the year
+    veg_proportions[[as.character(year)]] <- data.frame(
+      Fire_ID = fire_id,
+      Fire_Year = fire_year,
+      Year = year,
+      Proportion = proportion
+    )
+  }
+  
+  # ----- Step 6: Combine and return the yearly results -----
+  return(do.call(rbind, veg_proportions))
+}
+
+# ------------------------------------------------------------------------------
+
+# Process all fires
+all_veg_data <- do.call(rbind, lapply(seq_along(fire_IDs), function(idx) {
+  
+  fire_id <- fire_IDs[idx]
+  fire_year <- yrs_ids$year[yrs_ids$OBJECTID == fire_id]
+  
+  if (length(fire_year) == 0 || is.na(fire_year)) {
+    cat("Skipping Fire ID:", fire_id, "- Year not found.\n")
+    return(NULL)
+  }
+  
+  cat("Processing Fire ID:", fire_id, "for Year:", fire_year, "\n")
+  
+  burn_severity_path <- paste0(
+    "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/RdNBR_classified/",
+    fire_id, ".tif"
+  )
+  
+  veg_folder_path <- paste0(
+    "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/veg_annual_individual/",
+    fire_id
+  )
+  
+  process_veg_class(fire_id, fire_year, burn_severity_path, veg_folder_path)
+}))
+
+
+```
+# NDVI of con. recovered vs. not recovered: 
+```{r}
+library(data.table)
+library(terra)
+library(fs)
+library(dplyr)
+library(tidyr)
+
+# Your vector of fire IDs
+# fire_IDs <- c("fire1", "fire2", ...)
+
+# Paths
+csv_path <- "C:/Users/jscho/Documents/Megafires-1985-2023-Data/raster_df_mega_repeated_planting"
+ndvi_base <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/NDVI_individual"
+
+# Output list
+results_list <- list()
+
+for (fire_id in fire_IDs) {
+  
+  # Paths
+  csv_file <- file.path(csv_path, paste0(fire_id, ".csv"))
+  ndvi_path <- file.path(ndvi_base, paste0(fire_id, "_NDVI.tif"))
+  
+  # Check file existence
+  if (!file_exists(csv_file) || !file_exists(ndvi_path)) {
+    warning(paste("Missing file for fire ID:", fire_id))
+    next
+  }
+  
+  # Read and filter data
+  df <- fread(csv_file)
+  df_filtered <- df[rdnbr_class == 3 & RF_pre_veg == 7 & reburn_20yrs ==0 & tree_planting == 0]
+  
+  # Skip if empty
+  if (nrow(df_filtered) == 0) next
+  
+  # Select x, y, and RF_postX_veg columns
+  rf_post_cols <- grep("^RF_post[0-9]+_veg$", names(df_filtered), value = TRUE)
+  df_filtered <- df_filtered[, c("x", "y", rf_post_cols, "transitioned", "returned", "fire_year", "yrs_to_return", "dist_unburned"), with = FALSE]
+  
+  # Extract NDVI
+  ndvi_rast <- rast(ndvi_path)
+  points <- vect(df_filtered[, .(x, y)], geom = c("x", "y"), crs = crs(ndvi_rast))
+  ndvi_values <- extract(ndvi_rast, points)[, -1]  # Remove ID column
+  
+  # Combine results
+  combined <- cbind(fire_id = fire_id, df_filtered, ndvi_values)
+  results_list[[fire_id]] <- combined
+}
+
+# Merge all results
+final_result <- rbindlist(results_list, fill = TRUE)
+
+# View or save
+print(final_result)
+# fwrite(final_result, "NDVI_RF_post_veg_extracted.csv")
+
+
+
+# For all fires- absolute
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+
+# List to store results
+ndvi_by_rel_year_list <- list()
+
+for (fid in fire_IDs) {
+  # Filter for one fire
+  df_fire <- final_result %>% filter(fire_id == fid)
+  
+  df_fire <- df_fire %>%
+  mutate(
+    returned_20yrs = if_else(returned == 1 & yrs_to_return < 21, 1, 0)
+  )
+
+  
+  # Get fire_year from the data (assumes it's constant within the fire)
+  fire_year <- unique(df_fire$fire_year)
+  if (length(fire_year) != 1) {
+    warning(paste("Skipping fire", fid, "- fire_year not unique"))
+    next
+  }
+  
+  # Pivot NDVI columns
+  ndvi_long <- df_fire %>%
+    pivot_longer(
+      cols = matches("^\\d+_NDVI_\\d{4}$"),
+      names_to = "ndvi_year",
+      values_to = "ndvi"
+    ) %>%
+    separate(ndvi_year, into = c("band_index", "year"), sep = "_NDVI_", convert = TRUE)
+  
+  # Filter to only years ≥ fire_year - 4
+  ndvi_long <- ndvi_long %>%
+    filter(year >= (fire_year - 4)) %>%
+    mutate(
+      fire_year = fire_year,
+      rel_year = year - fire_year
+    )
+  
+  # Store in list
+  ndvi_by_rel_year_list[[as.character(fid)]] <- ndvi_long
+}
+
+# Combine all into one dataframe
+ndvi_all_fires_rel_year <- bind_rows(ndvi_by_rel_year_list)
+
+# Combine both groups into one dataframe
+ndvi_combined <- ndvi_all_fires_rel_year %>%
+  filter(returned_20yrs %in% c(0, 1)) %>%
+  mutate(returned_20yrs = factor(returned_20yrs, labels = c("Not Returned", "Returned")))
+
+ndvi_combined_20 <- ndvi_combined %>%
+  filter(rel_year < 21)
+
+# Plot overlapping boxplots with transparency
+ggplot(ndvi_combined_20, aes(x = factor(rel_year), y = ndvi, fill = returned_20yrs)) +
+  geom_boxplot(
+    position = position_dodge(width = 0.6), 
+    width = 0.5, 
+    alpha = 0.5,
+    outlier.size = 0.5,
+    lwd = 0.2
+  ) +
+  scale_fill_manual(values = c("Not Returned" = "#d95f02", "Returned" = "#1b9e77")) +
+  labs(
+    x = "Year",
+    y = "NDVI",
+    fill = "Conifer Return Status",
+    title = "",
+    subtitle = ""
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    strip.text = element_text(face = "bold")
+  )
+
+
+
+# NDVI recovery, relative:
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+
+# List to store results
+ndvi_by_rel_year_list <- list()
+
+for (fid in fire_IDs) {
+  # Filter for one fire
+  df_fire <- final_result %>% filter(fire_id == fid)
+  
+  df_fire <- df_fire %>%
+  mutate(
+    returned_20yrs = if_else(returned == 1 & yrs_to_return < 21, 1, 0)
+  )
+
+  
+  # Get fire_year from the data (assumes it's constant within the fire)
+  fire_year <- unique(df_fire$fire_year)
+  if (length(fire_year) != 1) {
+    warning(paste("Skipping fire", fid, "- fire_year not unique"))
+    next
+  }
+  
+  # Pivot NDVI columns
+  ndvi_long <- df_fire %>%
+    pivot_longer(
+      cols = matches("^\\d+_NDVI_\\d{4}$"),
+      names_to = "ndvi_year",
+      values_to = "ndvi"
+    ) %>%
+    separate(ndvi_year, into = c("band_index", "year"), sep = "_NDVI_", convert = TRUE)
+  
+ ndvi_long <- ndvi_long %>%
+  mutate(
+    fire_year = fire_year,
+    rel_year = year - fire_year
+  )
+
+# Compute pre-fire NDVI mean per pixel (rel_year -3, -2, -1)
+pre_fire_means <- ndvi_long %>%
+  filter(rel_year %in% c(-3, -2, -1)) %>%
+  group_by(x, y) %>%
+  summarise(pre_fire_ndvi = mean(ndvi, na.rm = TRUE), .groups = "drop")
+
+# Join and compute NDVI delta
+ndvi_long <- ndvi_long %>%
+  left_join(pre_fire_means, by = c("x", "y")) %>%
+  mutate(ndvi_diff = ndvi - pre_fire_ndvi)
+
+  
+  # Store in list
+  ndvi_by_rel_year_list[[as.character(fid)]] <- ndvi_long
+}
+
+# Combine all into one dataframe
+ndvi_all_fires_rel_year <- bind_rows(ndvi_by_rel_year_list)
+
+# Combine both groups into one dataframe
+ndvi_combined <- ndvi_all_fires_rel_year %>%
+  filter(returned_20yrs %in% c(0, 1)) %>%
+  mutate(returned_20yrs = factor(returned_20yrs, labels = c("Not Returned", "Returned")))
+
+ndvi_combined_20 <- ndvi_combined %>%
+  filter(rel_year < 21)
+
+ndvi_combined_20 <- ndvi_combined_20 %>%
+    filter(rel_year > -4)
+
+ndvi_combined_20 <- ndvi_combined_20 %>%
+  mutate(returned_20yrs = factor(returned_20yrs, labels = c("not returned", "returned")))
+
+box_ret_no <- ggplot(ndvi_combined_20, aes(x = factor(rel_year), y = ndvi_diff, fill = returned_20yrs)) +
+  geom_boxplot(
+    position = position_dodge(width = 0.6), 
+    width = 0.5, 
+    alpha = 1,
+    outlier.size = 0.5,
+    lwd = 0.2
+  ) +
+  scale_fill_manual(values = c("not returned" = "darkgrey", "returned" = "#0e4f12")) +
+  labs(
+    x = "Relative year",
+    y = "ΔNDVI (post - pre)",
+    fill = "20-year return to conifer",
+    title = "",
+    subtitle = ""
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    strip.text = element_text(face = "bold")
+  )+ geom_hline(yintercept = 0, linetype = "dashed", color = "grey40")
+
+
+
+
+```
+
+
+
+# Recovery: comparison NDVI vs. conifer
+
+```{r}
+# Plot NDVI proportions and conifer proportions in the same plot
+library(dplyr)
+library(ggplot2)
+
+# Add a column to distinguish NDVI and vegetation proportions
+all_NDVI_data <- all_NDVI_data %>%
+  mutate(Type = "NDVI")
+all_veg_data <- all_veg_data %>%
+  mutate(Type = "Conifer class")
+
+all_NDVI_data$Proportion_Recovery_Mean <- all_NDVI_data$Proportion_Recovered
+all_veg_data$Proportion_Recovery_Mean <- all_veg_data$Proportion
+
+all_veg_data$Relative_Year <- all_veg_data$Year - all_veg_data$Fire_Year
+all_NDVI_data$Relative_Year <- all_NDVI_data$Year - all_NDVI_data$Fire_Year
+
+# Combine the two datasets
+combined_data <- bind_rows(
+  all_NDVI_data %>% dplyr::select(Fire_ID, Relative_Year, Proportion_Recovery_Mean, Type),
+  all_veg_data %>% dplyr::select(Fire_ID, Relative_Year, Proportion_Recovery_Mean, Type)
+)
+
+# Ensure Fire_ID is a factor for discrete coloring
+combined_data$Fire_ID <- as.factor(combined_data$Fire_ID)
+
+
+# Merge fire name and year information from SN_fires_attr_mega
+library(stringr)
+
+# Ensure consistent types for Fire_ID
+combined_data <- combined_data %>%
+  mutate(Fire_ID = as.integer(as.character(Fire_ID)))  # Convert Fire_ID to integer
+
+
+# Merge fire name and year information from SN_fires_attr_mega
+combined_data <- combined_data %>%
+  left_join(
+    SN_fires_attr_mega %>%
+      dplyr::select(OBJECTID, FIRE_NAME, YEAR_) %>%
+      dplyr::rename(Fire_ID = OBJECTID, Fire_Year = YEAR_),
+    by = "Fire_ID"
+  )
+
+# Add formatted facet labels
+combined_data <- combined_data %>%
+  mutate(
+    Facet_Label = str_to_title(FIRE_NAME),  # Convert to title case
+    Facet_Label = paste(Facet_Label, " (", Fire_Year, ")", sep = "")  # Add space before year
+  )
+
+# Define light green and dark green colors
+color_palette <- c("NDVI" = "lightgreen", "Conifer class" = "darkgreen")
+
+plot_combined_faceted_smooth <- ggplot(combined_data %>% filter(Relative_Year > 0), 
+                                       aes(x = Relative_Year, y = Proportion_Recovery_Mean, 
+                                           group = Type, color = Type)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey50") +
+  geom_line() +
+  geom_smooth(
+    method = "gam",
+    formula = y ~ s(x, bs = "cs"),
+    se = TRUE,
+    aes(fill = Type),
+    alpha = 0.2
+  ) +
+  labs(
+    title = "",
+    x = "Years post-fire",
+    y = "Proportion recovered",
+    color = "Vegetation metric",
+    fill = "Vegetation metric"
+  ) +
+  scale_color_manual(values = color_palette) +
+  scale_fill_manual(values = color_palette) +
+  scale_y_continuous(limits = c(0, 1.2)) +
+  scale_x_continuous(breaks = c(1, 5, 10, 15, 20)) +  # <-- set x breaks manually
+  facet_wrap(~ Facet_Label, scales = "fixed", ncol = 5) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    strip.text = element_text(face = "bold", size = 10),
+    axis.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 10)
+  )
+
+
+# Print the plot
+print(plot_combined_faceted_smooth)
+```
+
+
+
+
+```{r}
+# Proportion of pixels with recovered NDVI, by distance from conifer
+
+library(terra)
+library(dplyr)
+
+process_fire <- function(fire_id, fire_year) {
+  
+  # ----- Paths -----
+  burn_severity_path <- paste0(
+    "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/RdNBR_classified/", fire_id, ".tif")
+  
+  ndvi_path <- paste0(
+    "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/NDVI_individual/", fire_id, "_NDVI.tif")
+  
+  veg_class_path <- paste0(
+    "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/veg_annual_individual/",
+    fire_id, "/", fire_year - 1, "_Mega_", fire_id, ".tif")
+  
+  distance_path <- paste0(
+    "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Megafires/dist_unburned_conifer_7/",
+    fire_id, "_7.tif")
+  
+  # ----- Load rasters -----
+  burn_severity <- rast(burn_severity_path)
+  ndvi_stack <- rast(ndvi_path)
+  veg_class <- rast(veg_class_path)
+  distance <- rast(distance_path)
+  
+  # ----- Align all rasters -----
+  burn_severity <- resample(burn_severity, ndvi_stack, method = "near")
+  veg_class <- resample(veg_class, ndvi_stack, method = "near")
+  distance <- resample(distance, ndvi_stack, method = "near")
+  
+  # ----- Create base mask: high-severity coniferous pixels -----
+  mask <- (burn_severity == 3) & (veg_class == 7)
+  
+  # Apply mask to NDVI and distance
+  masked_ndvi_stack <- mask(ndvi_stack, mask, updatevalue = NA)
+  masked_distance <- mask(distance, mask, updatevalue = NA)
+  
+  # ----- Define year bands -----
+  ndvi_years <- 1984:(1984 + nlyr(ndvi_stack) - 1)
+  fire_band <- which(ndvi_years == fire_year)
+  selected_bands <- c((fire_band - 3):fire_band, (fire_band + 1):(fire_band + 20))
+  selected_bands <- selected_bands[selected_bands > 0 & selected_bands <= nlyr(ndvi_stack)]
+  
+  # ----- Calculate pre-fire NDVI mean per pixel -----
+  pre_fire_bands <- (fire_band - 3):(fire_band - 1)
+  pre_fire_values <- values(masked_ndvi_stack[[pre_fire_bands]])
+  pre_fire_mean_ndvi <- if (is.matrix(pre_fire_values)) {
+    rowMeans(pre_fire_values, na.rm = TRUE)
+  } else {
+    as.numeric(pre_fire_values)
+  }
+  
+  # ----- Loop through years and calculate recovery proportions -----
+  ndvi_stats <- lapply(selected_bands, function(band) {
+    ndvi_values <- values(masked_ndvi_stack[[band]])
+    dist_values <- values(masked_distance)
+    
+    # Classify pixel groups by distance
+    near <- which(dist_values < 150)
+    far <- which(dist_values >= 150)
+    
+    # Proportion recovered: NDVI >= pre-fire mean
+    recovered_flags <- ndvi_values >= pre_fire_mean_ndvi
+    
+    prop_near <- mean(recovered_flags[near], na.rm = TRUE)
+    prop_far  <- mean(recovered_flags[far], na.rm = TRUE)
+    
+    data.frame(
+      Year = ndvi_years[band],
+      Relative_Year = ndvi_years[band] - fire_year,
+      Proportion_Near = prop_near,
+      Proportion_Far = prop_far
+    )
+  })
+  
+  # Combine results and add metadata
+  ndvi_stats <- do.call(rbind, ndvi_stats)
+  ndvi_stats$Fire_ID <- fire_id
+  ndvi_stats$Fire_Year <- fire_year
+  
+  return(ndvi_stats)
+}
+
+all_NDVI_data_split_distance <- do.call(rbind, lapply(seq_along(fire_IDs), function(idx) {
+  fire_id <- fire_IDs[idx]
+  fire_year <- yrs_ids$year[yrs_ids$OBJECTID == fire_id]
+  
+  if (!is.na(fire_year)) {
+    cat("Processing Fire ID:", fire_id, "for Year:", fire_year, "\n")
+    process_fire(fire_id, fire_year)
+  } else {
+    cat("Skipping Fire ID:", fire_id, "- Year not found.\n")
+    NULL
+  }
+}))
+
+
+all_NDVI_data_split_distance <- all_NDVI_data_split_distance %>%
+  filter(Relative_Year>0)
+
+
+
+
+```
+
+
+
+```{r}
+# Veg class proportion conifer recovered by distance from conifer
+
+library(terra)
+library(dplyr)
+
+process_veg_class_by_distance <- function(fire_id, fire_year, burn_severity_path, veg_folder_path, distance_path) {
+  
+  # Load rasters
+  burn_severity <- rast(burn_severity_path)
+  distance <- rast(distance_path)
+  
+  pre_fire_path <- paste0(veg_folder_path, "/", fire_year - 1, "_Mega_", fire_id, ".tif")
+  if (!file.exists(pre_fire_path)) {
+    cat("Pre-fire vegetation raster not found for Fire ID:", fire_id, "\n")
+    return(NULL)
+  }
+  pre_fire_veg <- rast(pre_fire_path)
+  
+  # Align
+  burn_severity <- resample(burn_severity, pre_fire_veg, method = "near")
+  distance <- resample(distance, pre_fire_veg, method = "near")
+  
+  # Base mask: high severity + pre-fire coniferous
+  high_sev <- burn_severity == 3
+  conifer <- pre_fire_veg == 7
+  base_mask <- high_sev & conifer
+  
+  if (global(base_mask, "sum", na.rm = TRUE)[,1] == 0) {
+    cat("No valid high-severity coniferous pixels for Fire ID:", fire_id, "\n")
+    return(NULL)
+  }
+  
+  # Distance masks
+  near_mask <- base_mask & (distance < 150)
+  far_mask  <- base_mask & (distance >= 150)
+  
+  # Get 3-year pre-fire average conifer presence for each distance class
+  prefire_years <- (fire_year - 3):(fire_year - 1)
+  prefire_conifer_count <- function(mask) {
+    vals <- lapply(prefire_years, function(y) {
+      fpath <- paste0(veg_folder_path, "/", y, "_Mega_", fire_id, ".tif")
+      if (file.exists(fpath)) {
+        r <- rast(fpath) |> crop(burn_severity) |> resample(burn_severity, "near")
+        r[mask]
+      } else {
+        NA
+      }
+    })
+    conifer_mat <- do.call(cbind, vals)
+    rowMeans(conifer_mat == 7, na.rm = TRUE)
+  }
+  
+  pre_conif_near <- prefire_conifer_count(near_mask)
+  pre_conif_far  <- prefire_conifer_count(far_mask)
+  
+  # Process post-fire years
+  years <- (fire_year + 1):(fire_year + 20)
+  results <- lapply(years, function(year) {
+    fpath <- paste0(veg_folder_path, "/", year, "_Mega_", fire_id, ".tif")
+    if (!file.exists(fpath)) {
+      cat("File not found for year:", year, "\n")
+      return(NULL)
+    }
+    
+    r <- rast(fpath) |> crop(burn_severity) |> resample(burn_severity, "near")
+    
+    val_near <- r[near_mask]
+    val_far  <- r[far_mask]
+    
+    # Recovered if current conifer and conifer in prefire mean ≥ 0.5
+    recovered_near <- (val_near == 7) & (pre_conif_near >= 0.5)
+    recovered_far  <- (val_far == 7) & (pre_conif_far >= 0.5)
+    
+    prop_near <- mean(recovered_near, na.rm = TRUE)
+    prop_far  <- mean(recovered_far, na.rm = TRUE)
+    
+    data.frame(
+      Year = year,
+      Relative_Year = year - fire_year,
+      Proportion_Near = prop_near,
+      Proportion_Far = prop_far,
+      Fire_ID = fire_id,
+      Fire_Year = fire_year
+    )
+  })
+  
+  do.call(rbind, results)
+}
+
+
+all_veg_data_split_distance <- do.call(rbind, lapply(seq_along(fire_IDs), function(idx) {
+  fire_id <- fire_IDs[idx]
+  fire_year <- yrs_ids$year[yrs_ids$OBJECTID == fire_id]
+  burn_sev_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/RdNBR_classified/", fire_id, ".tif")
+  veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/veg_annual_individual/", fire_id)
+  dist_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Megafires/dist_unburned_conifer_7/", fire_id, "_7.tif")
+  
+  if (!is.na(fire_year)) {
+    process_veg_class_by_distance(fire_id, fire_year, burn_sev_path, veg_folder, dist_path)
+  } else {
+    NULL
+  }
+}))
+
+
+```
+
+
+
+
+```{r}
+
+# Combine vegetation recovery metrics and distance classes###### conifer recovery and NDVI, by distance class
+# Convert to long format
+all_NDVI_data_long <- all_NDVI_data_split_distance %>%
+  pivot_longer(
+    cols = c(Proportion_Near, Proportion_Far),  # Columns to reshape
+    names_to = "dist_class",                   # New column to store names
+    values_to = "Proportion"                   # New column to store values
+  ) %>%
+  mutate(
+    dist_class = ifelse(dist_class == "Proportion_Near", "near", "far")  # Rename dist_class values
+  )
+
+all_veg_data_long <- all_veg_data_split_distance %>%
+  pivot_longer(
+    cols = c(Proportion_Near, Proportion_Far),  # Columns to reshape
+    names_to = "dist_class",                   # New column to store names
+    values_to = "Proportion"                   # New column to store values
+  ) %>%
+  mutate(
+    dist_class = ifelse(dist_class == "Proportion_Near", "near", "far")  # Rename dist_class values
+  )
+
+# Add a column to distinguish NDVI and vegetation proportions
+all_NDVI_data_long <- all_NDVI_data_long %>%
+  mutate(Type = "NDVI")
+all_veg_data_long <- all_veg_data_long %>%
+  mutate(Type = "Vegetation")
+
+# Combine the two datasets
+combined_data_dist <- bind_rows(
+  all_NDVI_data_long %>% dplyr::select(Fire_ID, Relative_Year, Proportion, Type,dist_class),
+  all_veg_data_long %>% dplyr::select(Fire_ID, Relative_Year, Proportion, Type, dist_class)
+)
+
+
+# Merge fire name and year information from SN_fires_attr_mega
+combined_data_dist <- combined_data_dist %>%
+  left_join(
+    SN_fires_attr_mega %>%
+      dplyr::select(OBJECTID, FIRE_NAME, YEAR_) %>%
+      rename(Fire_ID = OBJECTID, Fire_Year = YEAR_),
+    by = "Fire_ID"
+  )
+
+
+# Add formatted facet labels
+combined_data_dist <- combined_data_dist %>%
+  mutate(
+    Facet_Label = str_to_title(FIRE_NAME),  # Convert to title case
+    Facet_Label = paste(Facet_Label, " (", Fire_Year, ")", sep = "")  # Add space before year
+  )
+
+
+# Define custom color palette for Type and Distance Class
+color_palette <- c(
+  "NDVI_near" = "#6a51a3",  # Dark purple
+  "NDVI_far" = "#9e9ac8",   # Light purple
+  "Vegetation_near" = "#238b45",  # Dark green
+  "Vegetation_far" = "#74c476"   # Light green
+)
+
+combined_data_dist$Type_dist <- interaction(combined_data_dist$Type, combined_data_dist$dist_class, sep = "_")
+
+# Create the plot
+plot_combined_faceted_smooth <- ggplot(combined_data_dist, 
+                                       aes(x = Relative_Year, y = Proportion, 
+                                           group = Type_dist,  # Group by Type and Distance Class
+                                           color = Type_dist,  # Map color to the combined Type and Distance Class
+                                           linetype = dist_class)) +  # Map linetype to Distance Class
+  geom_line(alpha = 0.7) +  # Add lines with transparency
+  geom_smooth(
+    data = combined_data_dist %>% filter(Relative_Year >= 1),  # Filter for Relative_Year >= 1
+    method = "gam",
+    formula = y ~ s(x, bs = "cs"),
+    se = TRUE,  # Add confidence intervals
+    aes(fill = interaction(Type, dist_class), linetype = dist_class),  # Match fill to combined Type and Distance Class
+    alpha = 0.2  # Transparency for confidence interval ribbons
+  ) +
+  labs(
+    title = "",
+    x = "Years post-fire",
+    y = "Proportion",
+    color = "Type and Distance Class",
+    fill = "Type and Distance Class",  # Legend for confidence intervals
+    linetype = "Distance Class"  # Legend for line types
+  ) +
+  scale_color_manual(values = color_palette) +  # Use the custom color palette
+  scale_fill_manual(values = color_palette) +  # Use the custom fill palette
+  scale_linetype_manual(values = c("solid", "dashed")) +  # Different line types for near and far
+  facet_wrap(~ Facet_Label, scales = "free_y", ncol = 5) +  # Facet by Facet_Label
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    strip.text = element_text(face = "bold", size = 10),  # Customize facet labels
+    legend.position = "bottom",  # Position legend below plot
+    legend.title = element_text(size = 12),  # Customize legend title
+    legend.text = element_text(size = 10)  # Customize legend text
+  )
+
+# Print the plot
+print(plot_combined_faceted_smooth)
+
+```
+
+```{r}
+# Statistical analysis of recovery
+
+library(mgcv)
+
+# Function to calculate recovery metrics
+calculate_recovery_metrics <- function(data) {
+  # Fit GAM for the fire's data (NDVI and Vegetation)
+  gam_ndvi <- gam(Proportion ~ s(Relative_Year, bs = "cs"), data = data[data$dist_class == "near" & data$Relative_Year >= 1, ])
+  gam_veg <- gam(Proportion ~ s(Relative_Year, bs = "cs"), data = data[data$dist_class == "far" & data$Relative_Year >= 1, ])
+  
+  # Predict values at key points
+  ndvi_pred <- predict(gam_ndvi, data.frame(Relative_Year = c(1, 20)), type = "response")
+  veg_pred <- predict(gam_veg, data.frame(Relative_Year = c(1, 20)), type = "response")
+  
+  # Calculate pre-fire averages
+  pre_fire_ndvi <- mean(data$Proportion[data$dist_class == "near" & data$Relative_Year %in% c(-3, -2, -1)], na.rm = TRUE)
+  pre_fire_veg <- mean(data$Proportion[data$dist_class == "far" & data$Relative_Year %in% c(-3, -2, -1)], na.rm = TRUE)
+  
+  # Calculate recovery magnitude
+  ndvi_magnitude <- ndvi_pred[2] - pre_fire_ndvi
+  veg_magnitude <- veg_pred[2] - pre_fire_veg
+  
+  
+    # Calculate recovery rates (slopes of the GAM)
+  ndvi_slope_3yrs <- diff(ndvi_pred) / 2  # Slope from year 1 to 10
+  veg_slope_3yrs <- diff(veg_pred) / 2
+  
+    # Calculate recovery rates (slopes of the GAM)
+  ndvi_slope_5yrs <- diff(ndvi_pred) / 4  # Slope from year 1 to 10
+  veg_slope_5yrs <- diff(veg_pred) / 4
+  
+  # Calculate recovery rates (slopes of the GAM)
+  ndvi_slope_10yrs <- diff(ndvi_pred) / 9  # Slope from year 1 to 10
+  veg_slope_10yrs <- diff(veg_pred) / 9
+  
+    # Calculate recovery rates (slopes of the GAM)
+  ndvi_slope_15yrs <- diff(ndvi_pred) / 14  # Slope from year 1 to 10
+  veg_slope_15yrs <- diff(veg_pred) / 14
+  
+    # Calculate recovery rates (slopes of the GAM)
+  ndvi_slope_20yrs <- diff(ndvi_pred) / 19  # Slope from year 1 to 10
+  veg_slope_20yrs <- diff(veg_pred) / 19
+  
+  # Return metrics
+  data.frame(
+    Fire_ID = unique(data$Fire_ID),
+    NDVI_Magnitude = ndvi_magnitude,
+    NDVI_Rate_3yrs = ndvi_slope_3yrs,
+    Vegetation_Magnitude = veg_magnitude,
+    Vegetation_Rate_3yrs = veg_slope_3yrs,
+    NDVI_Rate_5yrs = ndvi_slope_5yrs,
+    Vegetation_Rate_5yrs = veg_slope_5yrs,
+    NDVI_Rate_10yrs = ndvi_slope_10yrs,
+    Vegetation_Rate_10yrs = veg_slope_10yrs,
+    NDVI_Rate_15yrs = ndvi_slope_15yrs,
+    Vegetation_Rate_15yrs = veg_slope_15yrs,
+    NDVI_Rate_20yrs = ndvi_slope_20yrs,
+    Vegetation_Rate_20yrs = veg_slope_20yrs
+  )
+}
+
+library(purrr)
+# Apply function to each fire's data
+recovery_metrics <- all_veg_data %>%
+  group_by(Fire_ID) %>%
+  group_split() %>%
+  map_dfr(calculate_recovery_metrics)
+
+
+# Identify top 25% of fires by Vegetation_Magnitude
+top_25_threshold <- quantile(recovery_metrics$Vegetation_Magnitude, 0.75, na.rm = TRUE)
+
+recovery_metrics_long <- recovery_metrics %>%
+  pivot_longer(
+    cols = starts_with("Vegetation_Rate"),
+    names_to = "Timeframe",
+    values_to = "Vegetation_Rate"
+  ) %>%
+  mutate(
+    Timeframe = case_when(
+      str_detect(Timeframe, "3yrs") ~ "3 Years",
+      str_detect(Timeframe, "5yrs") ~ "5 Years",
+      str_detect(Timeframe, "10yrs") ~ "10 Years",
+      str_detect(Timeframe, "15yrs") ~ "15 Years",
+      str_detect(Timeframe, "20yrs") ~ "20 Years",
+      TRUE ~ Timeframe
+    )
+  )
+
+# Reorder Timeframe levels
+recovery_metrics_long <- recovery_metrics_long %>%
+  mutate(
+    Timeframe = factor(Timeframe, levels = c("3 Years", "5 Years", "10 Years", "15 Years", "20 Years"))
+  )
+
+# Plot with gradient color scale and ribbons
+recov_rate_near <- ggplot(recovery_metrics_long, aes(x = Vegetation_Rate, y = Vegetation_Magnitude, color = Timeframe)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_smooth(method = 'lm', aes(fill = Timeframe), alpha = 0.2, show.legend = FALSE) +
+  scale_color_viridis_d(option = "plasma", begin = 0.1, end = 0.9) + # Gradient color scale
+  scale_fill_viridis_d(option = "plasma", begin = 0.1, end = 0.9) + # Matching ribbon colors
+  labs(
+    title = "Vegetation Recovery Rate vs Magnitude by Timeframe",
+    x = "Vegetation Recovery Rate",
+    y = "Vegetation Recovery Magnitude",
+    color = "Timeframe"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+
+
+# Same for NDVI metrics
+
+recovery_metrics_long_NDVI <- recovery_metrics %>%
+  pivot_longer(
+    cols = starts_with("NDVI_Rate"),
+    names_to = "Timeframe",
+    values_to = "NDVI_Rate"
+  ) %>%
+  mutate(
+    Timeframe = case_when(
+      str_detect(Timeframe, "3yrs") ~ "3 Years",
+      str_detect(Timeframe, "5yrs") ~ "5 Years",
+      str_detect(Timeframe, "10yrs") ~ "10 Years",
+      str_detect(Timeframe, "15yrs") ~ "15 Years",
+      str_detect(Timeframe, "20yrs") ~ "20 Years",
+      TRUE ~ Timeframe
+    )
+  )
+
+# Reorder Timeframe levels
+recovery_metrics_long_NDVI <- recovery_metrics_long_NDVI %>%
+  mutate(
+    Timeframe = factor(Timeframe, levels = c("3 Years", "5 Years", "10 Years", "15 Years", "20 Years"))
+  )
+
+# Plot with gradient color scale and ribbons
+recov_rate_far <- ggplot(recovery_metrics_long_NDVI, aes(x = NDVI_Rate, y = NDVI_Magnitude, color = Timeframe)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_smooth(method = 'lm', aes(fill = Timeframe), alpha = 0.2, show.legend = FALSE) +
+  scale_color_viridis_d(option = "plasma", begin = 0.1, end = 0.9) + # Gradient color scale
+  scale_fill_viridis_d(option = "plasma", begin = 0.1, end = 0.9) + # Matching ribbon colors
+  labs(
+    title = "Vegetation Recovery Rate vs Magnitude by Timeframe",
+    x = "Vegetation Recovery Rate",
+    y = "Vegetation Recovery Magnitude",
+    color = "Timeframe"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+```
+
+```{r}
+# Stacked bar veg charts for every fire
+
+# Loop across all OBJECTIDs and fire years to create plots for every fire
+#for(i in seq_along(yrs)) {
+for(i in 4:56) {
+  fire_year <- yrs[i]
+  num <- OBJECTIDs[i]
+  pre_fire_year <- fire_year - 1
+
+# Create raster stack of yearly vegetation of one fire
+  rdnbr_classified<-raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/SN_rdnbr_classified_megafires/",num,".tif"))
+  veg_stack_stbar<-stack(rdnbr_classified)
+
+  veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/RF Veg Annual Individual/", num, "/")
+
+  # List all TIF files in the folder
+  veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+
+  # Stack the TIF files
+  veg_stack <- stack(veg_files)
+
+  veg_stack_stbar<-stack(veg_stack_stbar,veg_stack)
+
+  # Convert vegetation stack to dataframe with every column being vegetation in one year
+  df_veg_stack <- as.data.frame(veg_stack_stbar)
+  df_veg_stack <- na.omit(df_veg_stack)
+  colnames(df_veg_stack) <- c("rdnbr_class", paste0("veg_", 1984:2022))
+  n<-ncol(df_veg_stack)
+  
+  # Convert to long format
+  df_veg_stack_long<-reshape(df_veg_stack, varying = 2:n, sep = "_", direction = 'long')
+  df_veg_stack_long_highsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 3, ]
+  #df_veg_stack_long_modsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 2, ]
+  #df_veg_stack_long_lowsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 1, ]
+
+  # Proportional stacked bar chart of vegetation classes of one specific fire
+  sums_stats_veg_1 <-df_veg_stack_long_highsev %>%
+    group_by(time,veg) %>%
+    summarise(n=n())
+
+  sums_stats_veg_1$veg <- factor(sums_stats_veg_1$veg, 
+                                levels = c('0', '1', '2', '3', '4', '5', '6', '7'))
+
+  plot_2_1 <- ggplot(sums_stats_veg_1[order(sums_stats_veg_1$veg,decreasing=F),], aes(x=time, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity')+
+    scale_fill_manual(values = c('0'='black','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("proportion of high sev burned area")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+    annotate(
+      x = fire_year, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+    theme(legend.position = "none")
+    #ggtitle("")
+  
+  # Define the folder path where you want to save the file
+  folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Outputs/Megafires/RF Veg Series/"
+
+  # Construct the filename dynamically
+  filename <- paste0(folder_path,fire_year, "_", num, ".png")
+
+  # Save the plot as a .png file
+  ggsave(filename, plot = plot_2_1, width = 8, height = 6, dpi = 300)
+
+}
+
+
+```
+
+```{r}
+# Stacked bar veg charts for individual fire- split by distance from unburned- only pixels conifer pre-fire
+
+
+fire_year <- 1994
+num <- 28976
+pre_fire_year <- fire_year - 1
+
+# Create raster stack of yearly vegetation of one fire
+rdnbr_classified<-raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/SN_rdnbr_reclassified_megafires/",num,".tif"))
+  
+# File paths and other variables using the declared number
+distance_highSev_toUnburned_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Megafires/distance_to_unburned_conifer/", num, "_dist.tif")
+
+# Load the raster
+distance_highSev_toUnburned <- raster(distance_highSev_toUnburned_path)
+distance_highSev_toUnburned <- projectRaster(distance_highSev_toUnburned, rdnbr_classified)  
+  
+veg_stack_stbar<-stack(rdnbr_classified,distance_highSev_toUnburned)
+
+veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "/")
+
+# List all TIF files in the folder
+veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+
+# Stack the TIF files
+veg_stack <- stack(veg_files)
+
+veg_stack_stbar<-stack(veg_stack_stbar,veg_stack)
+
+# Convert vegetation stack to dataframe with every column being vegetation in one year
+df_veg_stack <- as.data.frame(veg_stack_stbar)
+df_veg_stack <- na.omit(df_veg_stack)
+colnames(df_veg_stack) <- c("rdnbr_class","distance_to_unburned", paste0("veg_", 1984:2022))
+n<-ncol(df_veg_stack)
+df_veg_stack <- df_veg_stack %>%
+  filter(!!sym(paste0("veg_", pre_fire_year))==7)
+
+df_veg_stack <- df_veg_stack %>%
+  mutate(!!sym(paste0("veg_", fire_year)) := 0)
+  
+# Convert to long format
+df_veg_stack_long<-reshape(df_veg_stack, varying = 3:n, sep = "_", direction = 'long')
+df_veg_stack_long_highsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 3, ]
+
+# Add distance_class column
+df_veg_stack_long_highsev <- df_veg_stack_long_highsev %>%
+  mutate(distance_class = case_when(
+    distance_to_unburned >= 0 & distance_to_unburned < 150 ~ '0-150',
+    distance_to_unburned >= 150 ~ '>150'
+  ))
+
+  #df_veg_stack_long_modsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 2, ]
+  #df_veg_stack_long_lowsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 1, ]
+
+df_veg_stack_long_highsev_closer150m <- df_veg_stack_long_highsev[df_veg_stack_long_highsev$distance_class == "0-150", ]
+
+df_veg_stack_long_highsev_further150m <- df_veg_stack_long_highsev[df_veg_stack_long_highsev$distance_class == ">150", ]
+
+# Proportional stacked bar chart of vegetation classes of one specific fire- all high severity
+sums_stats_veg_1 <-df_veg_stack_long_highsev %>%
+  group_by(time,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_1$veg <- as.factor(sums_stats_veg_1$veg)
+
+sums_stats_veg_closer150m <-df_veg_stack_long_highsev_closer150m %>%
+  group_by(time,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_closer150m$veg <- as.factor(sums_stats_veg_closer150m$veg)
+
+sums_stats_veg_further150m <-df_veg_stack_long_highsev_further150m %>%
+  group_by(time,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_further150m$veg <- as.factor(sums_stats_veg_further150m$veg)
+
+
+  plot_2_1 <- ggplot(sums_stats_veg_1[order(sums_stats_veg_1$veg,decreasing=F),], aes(x=time, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+    annotate(
+      x = fire_year, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+    theme_classic()+
+    theme(legend.position = "none")+
+    ggtitle("all pixels at high sev")
+
+    plot_2_1_1 <- ggplot(sums_stats_veg_closer150m[order(sums_stats_veg_closer150m$veg,decreasing=F),], aes(x=time, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+      theme_classic()+
+    annotate(
+      x = fire_year, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+      theme(legend.position = "none")+
+    ggtitle("pixels closer 150m")
+      
+    plot_2_1_3 <- ggplot(sums_stats_veg_further150m[order(sums_stats_veg_further150m$veg,decreasing=F),], aes(x=time, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+          theme_classic()+
+    annotate(
+      x = fire_year, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+    theme(legend.position = "none")+
+    ggtitle("pixels further 150m")
+  
+  # Define the folder path where you want to save the file
+  folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/vegSeries/"
+
+  # Construct the filename dynamically
+  filename <- paste0(folder_path, "vegSeries_", fire_year, "_", num, ".png")
+
+  # Save the plot as a .png file
+  ggsave(filename, plot = plot_2_1, width = 8, height = 6, dpi = 300)
+
+gridded_vegseries <- grid.arrange(plot_2_1, plot_2_1_1, plot_2_1_3, nrow = 1, ncol = 3)
+
+```
+
+```{r}
+# Stacked bar veg charts for individual fire- split by distance from unburned- only pixels conifer pre-fire, for all fires
+
+for(i in seq_along(yrs)) {
+  fire_year <- yrs[i]
+  num <- OBJECTIDs[i]
+  pre_fire_year <- fire_year - 1
+  print(fire_year)
+  print(num)
+
+# Create raster stack of yearly vegetation of one fire
+rdnbr_classified<-raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/SN_rdnbr_reclassified_megafires/",num,".tif"))
+  
+# File paths and other variables using the declared number
+distance_highSev_toUnburned_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Megafires/distance_to_unburned_conifer/", num, "_dist.tif")
+
+# Load the raster
+distance_highSev_toUnburned <- raster(distance_highSev_toUnburned_path)
+distance_highSev_toUnburned <- projectRaster(distance_highSev_toUnburned, rdnbr_classified)  
+  
+veg_stack_stbar<-stack(rdnbr_classified,distance_highSev_toUnburned)
+
+veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "/")
+
+# List all TIF files in the folder
+veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+
+# Stack the TIF files
+veg_stack <- stack(veg_files)
+
+veg_stack_stbar<-stack(veg_stack_stbar,veg_stack)
+
+# Convert vegetation stack to dataframe with every column being vegetation in one year
+df_veg_stack <- as.data.frame(veg_stack_stbar)
+df_veg_stack <- na.omit(df_veg_stack)
+colnames(df_veg_stack) <- c("rdnbr_class","distance_to_unburned", paste0("veg_", 1984:2022))
+n<-ncol(df_veg_stack)
+df_veg_stack <- df_veg_stack %>%
+  filter(!!sym(paste0("veg_", pre_fire_year))==7)
+
+df_veg_stack <- df_veg_stack %>%
+  mutate(!!sym(paste0("veg_", fire_year)) := 0)
+  
+# Convert to long format
+df_veg_stack_long<-reshape(df_veg_stack, varying = 3:n, sep = "_", direction = 'long')
+df_veg_stack_long_highsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 3, ]
+
+# Add distance_class column
+df_veg_stack_long_highsev <- df_veg_stack_long_highsev %>%
+  mutate(distance_class = case_when(
+    distance_to_unburned >= 0 & distance_to_unburned < 150 ~ '0-150',
+    distance_to_unburned >= 150 ~ '>150'
+  ))
+
+  #df_veg_stack_long_modsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 2, ]
+  #df_veg_stack_long_lowsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 1, ]
+
+df_veg_stack_long_highsev_closer150m <- df_veg_stack_long_highsev[df_veg_stack_long_highsev$distance_class == "0-150", ]
+
+df_veg_stack_long_highsev_further150m <- df_veg_stack_long_highsev[df_veg_stack_long_highsev$distance_class == ">150", ]
+
+# Proportional stacked bar chart of vegetation classes of one specific fire- all high severity
+sums_stats_veg_1 <-df_veg_stack_long_highsev %>%
+  group_by(time,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_1$veg <- as.factor(sums_stats_veg_1$veg)
+
+sums_stats_veg_closer150m <-df_veg_stack_long_highsev_closer150m %>%
+  group_by(time,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_closer150m$veg <- as.factor(sums_stats_veg_closer150m$veg)
+
+sums_stats_veg_further150m <-df_veg_stack_long_highsev_further150m %>%
+  group_by(time,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_further150m$veg <- as.factor(sums_stats_veg_further150m$veg)
+
+
+  plot_2_1 <- ggplot(sums_stats_veg_1[order(sums_stats_veg_1$veg,decreasing=F),], aes(x=time, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+    annotate(
+      x = fire_year, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+    theme_classic()+
+    theme(legend.position = "none")+
+    ggtitle("all pixels at high sev")
+
+    plot_2_1_1 <- ggplot(sums_stats_veg_closer150m[order(sums_stats_veg_closer150m$veg,decreasing=F),], aes(x=time, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+      theme_classic()+
+    annotate(
+      x = fire_year, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+      theme(legend.position = "none")+
+    ggtitle("pixels closer 150m")
+      
+    plot_2_1_3 <- ggplot(sums_stats_veg_further150m[order(sums_stats_veg_further150m$veg,decreasing=F),], aes(x=time, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+          theme_classic()+
+    annotate(
+      x = fire_year, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+    theme(legend.position = "none")+
+    ggtitle("pixels further 150m")
+  
+  # Define the folder path where you want to save the file
+  folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/vegSeries/"
+
+  # Construct the filename dynamically
+  filename <- paste0(folder_path, "vegSeries_", fire_year, "_", num, ".png")
+
+gridded_vegseries <- grid.arrange(plot_2_1, plot_2_1_1, plot_2_1_3, nrow = 1, ncol = 3)
+  # Save the plot as a .png file
+  ggsave(filename, plot = gridded_vegseries, width = 14, height = 6, dpi = 300)
+}
+
+```
+
+# Master stacked bar veg
+
+```{r}
+# All transitions in one stacked bar graph
+
+# Define the column names
+column_names <- c("veg","distance_class", "years_post")
+
+# Create an empty dataframe with the specified column names
+master_veg_df <- setNames(data.frame(matrix(ncol = length(column_names), nrow = 0)), column_names)
+
+# For testing
+i <-7
+#-----
+
+for(i in seq_along(yrs)) {
+  fire_year <- yrs[i]
+  num <- OBJECTIDs[i]
+  pre_fire_year <- fire_year - 1
+  print(fire_year)
+  print(num)
+
+# Create raster stack of yearly vegetation of one fire
+rdnbr_classified<-raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/SN_rdnbr_reclassified_megafires/",num,".tif"))
+  
+# File paths and other variables using the declared number
+distance_highSev_toUnburned_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Megafires/distance_to_unburned_conifer/", num, "_dist.tif")
+
+# Load the raster
+distance_highSev_toUnburned <- raster(distance_highSev_toUnburned_path)
+distance_highSev_toUnburned <- projectRaster(distance_highSev_toUnburned, rdnbr_classified)  
+  
+veg_stack_stbar<-stack(rdnbr_classified,distance_highSev_toUnburned)
+
+veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "/")
+
+# List all TIF files in the folder
+veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+
+# Stack the TIF files
+veg_stack <- stack(veg_files)
+
+veg_stack_stbar<-stack(veg_stack_stbar,veg_stack)
+
+# Convert vegetation stack to dataframe with every column being vegetation in one year
+df_veg_stack <- as.data.frame(veg_stack_stbar)
+df_veg_stack <- na.omit(df_veg_stack)
+colnames(df_veg_stack) <- c("rdnbr_class","distance_to_unburned", paste0("veg_", 1984:2022))
+n<-ncol(df_veg_stack)
+df_veg_stack <- df_veg_stack %>%
+  filter(!!sym(paste0("veg_", pre_fire_year))==7)
+
+df_veg_stack <- df_veg_stack %>%
+  mutate(!!sym(paste0("veg_", fire_year)) := 0)
+  
+# Convert to long format
+df_veg_stack_long<-reshape(df_veg_stack, varying = 3:n, sep = "_", direction = 'long')
+df_veg_stack_long_highsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 3, ]
+
+# Discard all years but one pre-fire
+
+df_veg_stack_long_highsev <- df_veg_stack_long_highsev %>%
+  mutate(years_post = time-fire_year)%>%
+  filter(years_post >= -1)
+
+# Add distance_class column
+df_veg_stack_long_highsev <- df_veg_stack_long_highsev %>%
+  mutate(distance_class = case_when(
+    distance_to_unburned >= 0 & distance_to_unburned < 150 ~ '0-150',
+    distance_to_unburned >= 150 ~ '>150'
+  ))
+
+df_veg_stack_long_highsev <- df_veg_stack_long_highsev %>%
+  dplyr::select(-c(time,rdnbr_class,distance_to_unburned,id))
+
+master_veg_df <- rbind(master_veg_df,df_veg_stack_long_highsev)
+
+}
+
+write.csv(master_veg_df,"C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/SEKI_RS_R/datasets/SN_master_df_veg.csv" , row.names = FALSE)
+
+ #df_veg_stack_long_modsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 2, ]
+  #df_veg_stack_long_lowsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 1, ]
+
+master_veg_highsev_closer150m <- master_veg_df[master_veg_df$distance_class == "0-150", ]
+
+master_veg_highsev_further150m <- master_veg_df[master_veg_df$distance_class == ">150", ]
+
+# Proportional stacked bar chart of vegetation classes of one specific fire- all high severity
+sums_stats_veg_1 <-master_veg_df %>%
+  group_by(years_post,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_1$veg <- as.factor(sums_stats_veg_1$veg)
+
+sums_stats_veg_closer150m <-master_veg_highsev_closer150m %>%
+  group_by(years_post,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_closer150m$veg <- as.factor(sums_stats_veg_closer150m$veg)
+
+sums_stats_veg_further150m <-master_veg_highsev_further150m %>%
+  group_by(years_post,veg) %>%
+  summarise(n=n())
+
+sums_stats_veg_further150m$veg <- as.factor(sums_stats_veg_further150m$veg)
+
+
+  plot_2_1 <- ggplot(sums_stats_veg_1[order(sums_stats_veg_1$veg,decreasing=F),], aes(x=years_post, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+    annotate(
+      x = 0, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+    theme_classic()+
+    theme(legend.position = "none")+
+    ggtitle("all pixels at high sev")
+
+    plot_2_1_1 <- ggplot(sums_stats_veg_closer150m[order(sums_stats_veg_closer150m$veg,decreasing=F),], aes(x=years_post, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+      theme_classic()+
+    annotate(
+      x = 0, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+      theme(legend.position = "none")+
+    ggtitle("pixels closer 150m")
+      
+    plot_2_1_3 <- ggplot(sums_stats_veg_further150m[order(sums_stats_veg_further150m$veg,decreasing=F),], aes(x=years_post, y=n, fill=veg)) + 
+    geom_bar(position='fill',stat='identity',width=0.95)+
+    scale_fill_manual(values = c('0'='white','7'= '#0e4f12','1'='#956733','2'='#a7b5a5','3'='#0940ca','4'='#d8bf58','5'='#6dcd2b','6'='#ffacc9'),name = "vegetation class", labels = c('no data',"shrub", "bare","water","open","grass/herbaceous","bare soil","coniferous"))+
+    ylab("prop high sev")+
+    xlab("year")+
+    #labs(caption = paste0(fire_name," [", fire_year,"] vegetation composition over time"))+
+  
+    theme(plot.caption = element_text(hjust=0))+
+          theme_classic()+
+    annotate(
+      x = 0, y = 0, label = "I\n*fire", geom = "text",
+      color = "red",
+      lineheight = .55,
+      vjust = .8)+
+    theme(legend.position = "none")+
+    ggtitle("pixels further 150m")
+
+gridded_vegseries <- grid.arrange(plot_2_1, plot_2_1_1, plot_2_1_3, nrow = 1, ncol = 3)
+```
+
+# Inefficient way of creating grids for each fire, but it works
+
+```{r}
+# Universal recovery analysis based on veg classification and NDVI- loop and combine the four plots for each fire
+
+# These parameters can be tuned:
+# Distances from edge of interest
+a <- 0
+b <- 150
+c <- 300
+range_string1 <- paste(a,"-", b, sep = "")
+range_string2 <- paste(b, "-", c, sep = "")
+range_string3 <- paste(">", c, sep = "")
+
+# Load fire metrics for all fires
+fire_metrics <- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/SEKI_RS_R/datasets/SN_fire_metrics_rdnbr_1985_2020.csv", header=TRUE)
+
+# Extract fire IDs and fire years
+OBJECTIDs <- c(21678, 21679, 21683, 21684, 21688, 21786, 21791, 22057, 22060, 28976, 30032, 32384, 33025, 33113, 
+                  33252, 35032, 35053, 35312, 35322, 35874, 36180, 36404, 37023, 37098, 37928, 37959, 37989, 38018, 
+                  38120, 38341, 38923, 39327, 39335, 39356, 39424, 39430, 39674, 39683, 39756, 39762, 39763, 40325, 
+                  40570, 40705, 40882, 41219, 41262, 41627, 41747, 41837, 41925, 42055, 42350, 42380, 42387, 42745)
+
+yrs <- c()
+
+for (obj_id in OBJECTIDs) {
+  # Find the matching OBJECTID in the fire_metrics dataframe and extract the year
+  matching_year <- fire_metrics$year[fire_metrics$OBJECTID == obj_id]
+  
+  # Append the extracted year to the years vector
+  if (length(matching_year) > 0) {
+    yrs <- c(yrs, matching_year)
+  } else {
+    yrs <- c(yrs, NA)  # Append NA if no matching OBJECTID is found
+  }
+}
+
+comb <- as.data.frame(cbind(OBJECTIDs,yrs))
+
+#comb <- comb %>%
+#  filter(yrs < 2020)
+
+OBJECTIDs <- comb$OBJECTIDs
+yrs <- comb$yrs
+
+# Loop across all OBJECTIDs and fire years to create plots for every fire
+for(i in seq_along(yrs)) {
+  fire_year <- yrs[i]
+  num <- OBJECTIDs[i]
+  pre_fire_year <- fire_year - 1
+  
+  # Create raster stack of rdnbr (burn severity) and yearly classified vegetation of the fire
+  rdnbr_classified<-raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/SN_rdnbr_reclassified_megafires/",num,".tif"))
+  veg_stack_stbar<-stack(rdnbr_classified)
+  veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "/")
+  veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+  veg_stack <- stack(veg_files)
+  veg_stack_stbar<-stack(veg_stack_stbar,veg_stack)
+
+  # Convert vegetation stack to dataframe with every column being vegetation in one year
+  df_veg_stack <- as.data.frame(veg_stack_stbar)
+  df_veg_stack <- na.omit(df_veg_stack)
+  colnames(df_veg_stack) <- c("rdnbr_class", paste0("veg_", 1984:2023))
+  n<-ncol(df_veg_stack)
+
+  # Convert to long format
+  df_veg_stack_long<-reshape(df_veg_stack, varying = 2:n, sep = "_", direction = 'long')
+  
+  # Select high severity pixels only
+  df_veg_stack_long_highsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 3, ]
+
+  #Proportional stacked bar chart of vegetation classes of one specific fire
+  sums_stats_veg_1 <-df_veg_stack_long_highsev %>%
+    group_by(time,veg) %>%
+    summarise(n=n())
+  
+  sums_stats_veg_1$veg <- as.factor(sums_stats_veg_1$veg)
+  
+  # Plot 1: stacked bar chart of vegetation/ landcover types over time (high severity only)
+
+
+  # NDVI analysis
+
+  # Load yearly NDVI images
+  NDVI_stack_name <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/NDVI_individual/",num,"_NDVI.tif")
+  NDVI_stack <- stack(NDVI_stack_name)
+
+  # Load distance from unburned raster
+  distance_highSev_toUnburned_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "_DUnburned.tif")
+  distance_highSev_toUnburned <- raster(distance_highSev_toUnburned_path)
+
+  pre_fire_veg <- raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/",num,"/",pre_fire_year,".tif"))
+  raster2_matched <- projectRaster(pre_fire_veg, NDVI_stack)
+
+  # Extract all veg values
+  raster_points <- rasterToPoints(distance_highSev_toUnburned)
+  raster_coordinates <- as.data.frame(raster_points[, 1:2])
+  stacked_rasters <- stack(NDVI_stack,raster2_matched)
+  stack_values <- extract(stacked_rasters, raster_coordinates)
+  value_df <- as.data.frame(cbind(raster_points, stack_values))
+
+  # Add distance_class column
+  value_df <- value_df %>%
+    mutate(distance_class = case_when(
+      !!sym(paste0("X", num, "_DUnburned")) >= a & !!sym(paste0("X", num, "_DUnburned")) < b ~ range_string1,
+      !!sym(paste0("X", num, "_DUnburned")) >= b & !!sym(paste0("X", num, "_DUnburned")) < c ~ range_string2,
+      !!sym(paste0("X", num, "_DUnburned")) >= c ~ range_string3
+    ))
+
+  value_df <- value_df %>%
+    mutate(distance_class = factor(distance_class, levels = c(range_string1, range_string2, range_string3)))
+
+  value_df_con <- value_df %>%
+    filter(!!sym(paste0("X", pre_fire_year)) == 7)
+
+  value_df_long <- value_df_con %>%
+    pivot_longer(cols = -c(x, y, distance_class), 
+               names_to = "variable", 
+               values_to = "NDVI") %>%
+    filter(grepl("_NDVI_", variable)) %>%
+    mutate(year = substr(variable, nchar(variable) - 3, nchar(variable)))
+
+  # Drop the 'variable' column
+  value_df_long <- dplyr::select(value_df_long, -variable)
+  value_df_long$year <- as.numeric(value_df_long$year)
+
+  value_df_long_grouped <- value_df_long %>%
+    group_by(year, distance_class) %>%
+    summarize(mean_NDVI = mean(as.numeric(NDVI), na.rm = TRUE))
+
+  value_df_long_grouped_all <- value_df_long_grouped
+
+  value_df_long_grouped <- value_df_long_grouped %>%
+    filter(year > (fire_year+2))
+
+  value_df_long_grouped$years <- value_df_long_grouped$year - fire_year
+
+  # Plot 2: Vegetation recovery from NDVI from 3 years post-fire
+  # Plot colours
+  colors <- c('#f6b26b', '#ED5958', '#863893')
+
+
+  plot_40_1 <- ggplot(value_df_long_grouped, aes(x = years, y = mean_NDVI, color = distance_class, group = distance_class)) +
+    geom_line(linewidth=1.5) +
+    geom_point(size=2) +
+    labs(title = "Mean NDVI X years post-fire",
+        x = "years post-fire",
+        y = "NDVI",
+        color = "distance from unburned") +
+    theme_bw() +
+    #geom_smooth()+
+    scale_color_manual(values = colors)
+
+  # Plot 3: NDVI whole timeseries
+  plot_40_2 <- ggplot(value_df_long_grouped_all, aes(x = year, y = mean_NDVI, color = distance_class, group = distance_class)) +
+    geom_line(linewidth=1.5) +
+    geom_point(size=2) +
+    labs(title = "Mean NDVI of high severity pixels",
+        x = "year",
+        y = "NDVI",
+        color = "distance from unburned") +
+    theme_bw() +
+    #geom_smooth()+
+    scale_color_manual(values = colors)
+
+
+#Recovery analysis with RF vegetation classification
+
+# File paths and other variables using the declared number
+distance_highSev_toUnburned_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "_DUnburned.tif")
+veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "/")
+
+# Load the raster
+distance_highSev_toUnburned <- raster(distance_highSev_toUnburned_path)
+
+# List all TIF files in the folder
+veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+
+# Stack the TIF files
+veg_stack <- stack(veg_files)
+
+# Extract all veg values
+raster_points <- rasterToPoints(distance_highSev_toUnburned)
+raster_coordinates <- as.data.frame(raster_points[, 1:2])
+stack_values <- extract(veg_stack, raster_coordinates)
+
+value_df <- as.data.frame(cbind(raster_points, stack_values))
+
+# Assuming 'transitioned' column calculation
+value_df <- value_df %>%
+  mutate(transitioned = ifelse(!!sym(paste0("X",fire_year -1)) == !!sym(paste0("X",fire_year+1)), 0, 1))
+
+# Create new columns for each year
+years <- (fire_year+2):2023
+for (year in years) {
+  column_name <- paste0("trans_returned_to_preFire_veg", year - fire_year)
+  value_df <- value_df %>%
+    mutate(!!column_name := ifelse(transitioned == 1 & !!sym(paste0("X", fire_year-1)) == !!sym(paste0("X", year)), 1, 0))
+}
+
+value_df_trans <- value_df %>%
+  filter(transitioned == 1)
+
+
+# Construct the column name dynamically
+column_name <- paste0("X", pre_fire_year)
+
+# Use sym and !! to dynamically refer to the column name in filter
+value_df_trans_con <- value_df_trans %>%
+  filter(!!sym(column_name) == 7)
+
+
+# Add distance_class column
+value_df_trans_con <- value_df_trans_con %>%
+  mutate(distance_class = case_when(
+    !!sym(paste0("X", num, "_DUnburned")) >= 0 & !!sym(paste0("X", num, "_DUnburned")) < 150 ~ '0-150',
+    !!sym(paste0("X", num, "_DUnburned")) >= 150 & !!sym(paste0("X", num, "_DUnburned")) < 300 ~ '150-300',
+    !!sym(paste0("X", num, "_DUnburned")) >= 300 ~ '>300'
+  ))
+
+# Calculate the total counts for each distance_class
+total_counts <- value_df_trans_con %>%
+  group_by(distance_class) %>%
+  summarize(total_count = n(), .groups = 'drop')
+
+# Create an empty list to store the summary data frames
+summary_list <- list()
+
+# Loop over the range of columns from 3 to 30
+for (i in 2:(2023-fire_year)) {
+  column_name <- paste0("trans_returned_to_preFire_veg", i)
+  summary_df <- value_df_trans_con %>%
+    group_by(distance_class, !!sym(column_name)) %>%
+    summarize(count = n(), .groups = 'drop') %>%
+    left_join(total_counts, by = "distance_class") %>%
+    mutate(proportion = count / total_count)
+  
+  summary_df <- summary_df %>%
+    mutate(years = i)
+  
+  names(summary_df)[names(summary_df) == column_name] <- "trans_preFire"
+  
+  summary_list[[column_name]] <- summary_df
+}
+
+summary_df_combined <- do.call(rbind, summary_list)
+
+summary_df_trans_1 <- summary_df_combined %>%
+  filter(trans_preFire == 1) %>%
+  mutate(distance_class = factor(distance_class, levels = c('0-150', '150-300', '>300')))
+
+# Plot 4: RF vegetation classification recovery plot
+plot_40_3 <- ggplot(summary_df_trans_1, aes(x = years, y = proportion, color = distance_class, group = distance_class)) +
+  geom_line(linewidth=1.5) +
+  geom_point(size=2) +
+  labs(title = "Prop. pixels returned to conifer after X years",
+       x = "years post-fire",
+       y = "proportion recovered",
+       color = "distance from unburned") +
+  theme_bw() +
+  scale_color_manual(values = colors)
+
+
+
+# Put the four plots together and save them as a grid
+grid_arranged<-grid.arrange(plot_2_1, plot_40_1,plot_40_2,plot_40_3, ncol = 2)
+
+filename_grid <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/grids/",num,"_",fire_year,".png")
+ggsave(filename_grid, grid_arranged, width = 10, height = 8)
+
+
+# Saving individual NDVI plots
+# Define the folder path where you want to save the file
+folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/NDVI/post_fire/"
+
+# Construct the filename dynamically
+filename <- paste0(folder_path, "recov_NDVI_", fire_year, "_", num, ".png")
+
+# Save the plot as a .png file
+ggsave(filename, plot = plot_40_1, width = 8, height = 6, dpi = 300)
+
+# Define the folder path where you want to save the file
+folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/NDVI/all_years/"
+
+# Construct the filename dynamically
+filename <- paste0(folder_path, "recov_NDVI_", fire_year, "_", num, ".png")
+
+# Save the plot as a .png file
+ggsave(filename, plot = plot_40_2, width = 8, height = 6, dpi = 300)
+}
+```
+
+```{r}
+# Combine four plots into grid
+
+library(gridExtra)
+library(png)
+library(gridGraphics)
+
+for(i in seq_along(yrs)) {
+  fire_year <- yrs[i]
+  num <- OBJECTIDs[i]
+  
+  # Image paths
+  
+  # Veg stacked bar charts
+  folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/vegSeries/"
+  # Construct the filename dynamically
+  path1 <- paste0(folder_path, "vegSeries_", fire_year, "_", num, ".png")
+  
+  # Prop recov timeseries
+  folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/prop_recov/"
+  # Construct the filename dynamically
+  path2 <- paste0(folder_path, "recov_plot_", fire_year, "_", num, ".png")
+  
+  # NDVI all years
+  folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/NDVI/all_years/"
+  # Construct the filename dynamically
+  path3 <- paste0(folder_path, "recov_NDVI_", fire_year, "_", num, ".png")
+  
+  # NDVI from 3 years post-fire
+  folder_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/NDVI/post_fire/"
+  # Construct the filename dynamically
+  path4 <- paste0(folder_path, "recov_NDVI_", fire_year, "_", num, ".png")
+
+  # Read PNG images
+  img1 <- readPNG(path1)
+  img2 <- readPNG(path2)
+  img3 <- readPNG(path3)
+  img4 <- readPNG(path4)
+
+  tmp <- arrangeGrob(rasterGrob(img1),rasterGrob(img2),rasterGrob(img3), rasterGrob(img4),ncol=2)
+
+  filepath_save <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/Recovery_plots/grids/",num,"_",fire_year,".png")
+  ggsave(filepath_save,tmp,width=12,height=5)
+}
+```
+
+```{r}
+
+```
+
+```{r}
+master_recovery_trans_distance <- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/master_df_recovery_distance.csv", header=TRUE)
+
+fivePerc_further300m <- c(30107, 22235, 22057, 35204, 39756, 33252, 42745, 39424, 41262)
+
+
+recov_df <- master_recovery_trans_distance %>%
+  dplyr::filter(trans_preFire==1)
+
+object_ids_to_include <- fivePerc_further300m
+
+# Filter recov_df to include only the specified OBJECTIDs
+filtered_recov_df <- recov_df %>%
+  filter(OBJECTID %in% object_ids_to_include)
+
+# Create recovery plot
+plt <- ggplot(filtered_recov_df, aes(x = years, y = proportion, color = as.factor(OBJECTID))) +
+  geom_line(size=1.5) +
+  facet_wrap(~ distance_class) +
+  labs(
+    title = "Proportion over Years by OBJECTID and Distance Class",
+    x = "Year",
+    y = "Proportion",
+    color = "OBJECTID"
+  ) +
+  theme_minimal() +
+  theme(
+    #legend.position = 'none',
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+#Area far from edge
+
+```{r}
+library(reshape2)
+
+area_distance_to_unburned<- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/area_distance_to_unburned_edited.csv", header=TRUE)
+
+area_distance_to_unburned <- area_distance_to_unburned[1:165,]
+area_distance_to_unburned_clean <- na.omit(area_distance_to_unburned)
+
+area_distance_to_unburned$sample_size_ha <- area_distance_to_unburned$sample_size/11.11111
+
+
+# Calculate the total sample size for each new_OBJECTID
+total_sample_size <- area_distance_to_unburned %>%
+  group_by(OBJECTID) %>%
+  summarise(total_size = sum(sample_size)) %>%
+  arrange(desc(total_size))
+
+# Order the new_OBJECTID factor levels by total sample size
+area_distance_to_unburned$OBJECTID <- factor(area_distance_to_unburned$OBJECTID, levels = total_sample_size$OBJECTID)
+
+# Manually set the order of the distance_class factor levels
+area_distance_to_unburned$distance_class <- factor(area_distance_to_unburned$distance_class, levels = c(  ">300", "150-300","0-150"))
+
+# Define custom colors for the distance classes
+custom_colors <- c('0-150' = '#f6b26b', '150-300' = '#ED5958', '>300' = '#863893')
+
+# Create the stacked bar plot ordered by sample size
+plot_50_1 <- ggplot(area_distance_to_unburned, aes(x = OBJECTID, y = sample_size_ha, fill = distance_class)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = custom_colors) +
+  labs(
+    title = "Stacked Bar Plot of Sample Size by Distance Class",
+    x = "Megafire",
+    y = "Coniferous area burned at high severity [ha]",
+    fill = "Distance Class"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size=6),  # Tilt x-axis labels
+    panel.grid.major = element_blank(),  # Remove major gridlines
+    panel.grid.minor = element_blank()   # Remove minor gridlines
+  ) +
+  geom_hline(yintercept = 10000, color = "red", linetype = "dashed", size = 1) + 
+   annotate("text", x = Inf, y = 10000, label = "10,000 ha", color = "red", vjust = -0.5, hjust = 1.1, size = 3) +  # Add red label
+  scale_x_discrete(drop = FALSE)  # Ensure all levels of OBJECTID are shown
+
+
+
+```
+
+#Fire stats across all megafires
+
+```{r}
+# Calculate fire stats for all megafires, not just the ones with full recovery series
+
+# These parameters can be tuned:
+# Distances from edge of interest
+a <- 0
+b <- 150
+
+range_string1 <- paste(a,"-", b, sep = "")
+range_string2 <- paste(">", b, sep = "")
+
+# Load fire metrics for all fires
+fire_metrics <- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/SEKI_RS_R/datasets/SN_fire_metrics_rdnbr_1985_2020.csv", header=TRUE)
+
+# Extract fire IDs and fire years
+megafire_IDs <- c(21678, 21679, 21683, 21684, 21688, 21786, 21791, 22057, 22060, 28976, 30032, 32384, 33025, 33113, 
+                  33252, 35032, 35053, 35312, 35322, 35874, 36180, 36404, 37023, 37098, 37928, 37959, 37989, 38018, 
+                  38120, 38341, 38923, 39327, 39335, 39356, 39424, 39430, 39674, 39683, 39756, 39762, 39763, 40325, 
+                  40570, 40705, 40882, 41219, 41262, 41627, 41747, 41837, 41925, 42055, 42350, 42380, 42387, 42745)
+
+yrs <- c()
+
+for (obj_id in megafire_IDs) {
+  # Find the matching OBJECTID in the fire_metrics dataframe and extract the year
+  matching_year <- fire_metrics$year[fire_metrics$OBJECTID == obj_id]
+  
+  # Append the extracted year to the years vector
+  if (length(matching_year) > 0) {
+    yrs <- c(yrs, matching_year)
+  } else {
+    yrs <- c(yrs, NA)  # Append NA if no matching OBJECTID is found
+  }
+}
+
+comb <- as.data.frame(cbind(OBJECTIDs,yrs))
+
+OBJECTIDs <- comb$OBJECTIDs
+yrs <- comb$yrs
+
+# Loop across all OBJECTIDs and fire years to calculate metrics for every fire
+for(i in seq_along(yrs)) {
+  fire_year <- yrs[i]
+  num <- OBJECTIDs[i]
+  pre_fire_year <- fire_year - 1
+  
+  # Create raster stack of rdnbr (burn severity) and yearly classified vegetation of the fire
+  rdnbr_classified<-raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/SN_rdnbr_reclassified_megafires/",num,".tif"))
+  veg_stack_stbar<-stack(rdnbr_classified)
+  veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "/")
+  veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+  veg_stack <- stack(veg_files)
+  veg_stack_stbar<-stack(veg_stack_stbar,veg_stack)
+
+  # Convert vegetation stack to dataframe with every column being vegetation in one year
+  df_veg_stack <- as.data.frame(veg_stack_stbar)
+  df_veg_stack <- na.omit(df_veg_stack)
+  colnames(df_veg_stack) <- c("rdnbr_class", paste0("veg_", 1984:2023))
+  n<-ncol(df_veg_stack)
+
+  # Convert to long format
+  df_veg_stack_long<-reshape(df_veg_stack, varying = 2:n, sep = "_", direction = 'long')
+  
+  # Select high severity pixels only
+  df_veg_stack_long_highsev <- df_veg_stack_long[df_veg_stack_long$rdnbr_class == 3, ]
+
+  #Proportional stacked bar chart of vegetation classes of one specific fire
+  sums_stats_veg_1 <-df_veg_stack_long_highsev %>%
+    group_by(time,veg) %>%
+    summarise(n=n())
+  
+  sums_stats_veg_1$veg <- as.factor(sums_stats_veg_1$veg)
+  
+  filename_sums <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/high_sev_veg_sums/",fire_year, '_',num,'.csv')
+  write.csv(sums_stats_veg_1, filename_sums, row.names = FALSE)
+
+#   # NDVI analysis
+# 
+#   # Load yearly NDVI images
+#   NDVI_stack_name <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/NDVI_individual/",num,"_NDVI.tif")
+#   NDVI_stack <- stack(NDVI_stack_name)
+# 
+#   # Load distance from unburned raster
+#   distance_highSev_toUnburned_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "_DUnburned.tif")
+#   distance_highSev_toUnburned <- raster(distance_highSev_toUnburned_path)
+# 
+#   pre_fire_veg <- raster(paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/",num,"/",pre_fire_year,".tif"))
+#   raster2_matched <- projectRaster(pre_fire_veg, NDVI_stack)
+# 
+#   # Extract all veg values
+#   raster_points <- rasterToPoints(distance_highSev_toUnburned)
+#   raster_coordinates <- as.data.frame(raster_points[, 1:2])
+#   stacked_rasters <- stack(NDVI_stack,raster2_matched)
+#   stack_values <- extract(stacked_rasters, raster_coordinates)
+#   value_df <- as.data.frame(cbind(raster_points, stack_values))
+# 
+#   # Add distance_class column
+#   value_df <- value_df %>%
+#     mutate(distance_class = case_when(
+#       !!sym(paste0("X", num, "_DUnburned")) >= a & !!sym(paste0("X", num, "_DUnburned")) < b ~ range_string1,
+#       !!sym(paste0("X", num, "_DUnburned")) >= b & !!sym(paste0("X", num, "_DUnburned")) < c ~ range_string2,
+#       !!sym(paste0("X", num, "_DUnburned")) >= c ~ range_string3
+#     ))
+# 
+#   value_df <- value_df %>%
+#     mutate(distance_class = factor(distance_class, levels = c(range_string1, range_string2, range_string3)))
+# 
+#   value_df_con <- value_df %>%
+#     filter(!!sym(paste0("X", pre_fire_year)) == 7)
+# 
+#   value_df_long <- value_df_con %>%
+#     pivot_longer(cols = -c(x, y, distance_class), 
+#                names_to = "variable", 
+#                values_to = "NDVI") %>%
+#     filter(grepl("_NDVI_", variable)) %>%
+#     mutate(year = substr(variable, nchar(variable) - 3, nchar(variable)))
+# 
+#   # Drop the 'variable' column
+#   value_df_long <- dplyr::select(value_df_long, -variable)
+#   value_df_long$year <- as.numeric(value_df_long$year)
+# 
+#   value_df_long_grouped <- value_df_long %>%
+#     group_by(year, distance_class) %>%
+#     summarize(mean_NDVI = mean(as.numeric(NDVI), na.rm = TRUE))
+# 
+#   value_df_long_grouped_all <- value_df_long_grouped
+# 
+#   value_df_long_grouped <- value_df_long_grouped %>%
+#     filter(year > (fire_year+2))
+# 
+#   value_df_long_grouped$years <- value_df_long_grouped$year - fire_year
+# 
+# # File paths and other variables using the declared number
+# distance_highSev_toUnburned_path <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "_DUnburned.tif")
+# veg_folder <- paste0("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Recovery/", num, "/")
+# 
+# # Load the raster
+# distance_highSev_toUnburned <- raster(distance_highSev_toUnburned_path)
+# 
+# # List all TIF files in the folder
+# veg_files <- list.files(veg_folder, pattern = "\\.tif$", full.names = TRUE)
+# 
+# # Stack the TIF files
+# veg_stack <- stack(veg_files)
+# 
+# # Extract all veg values
+# raster_points <- rasterToPoints(distance_highSev_toUnburned)
+# raster_coordinates <- as.data.frame(raster_points[, 1:2])
+# stack_values <- extract(veg_stack, raster_coordinates)
+# 
+# value_df <- as.data.frame(cbind(raster_points, stack_values))
+# 
+# # Assuming 'transitioned' column calculation
+# value_df <- value_df %>%
+#   mutate(transitioned = ifelse(!!sym(paste0("X",fire_year -1)) == !!sym(paste0("X",fire_year+1)), 0, 1))
+# 
+# # Create new columns for each year
+# years <- (fire_year+2):2023
+# for (year in years) {
+#   column_name <- paste0("trans_returned_to_preFire_veg", year - fire_year)
+#   value_df <- value_df %>%
+#     mutate(!!column_name := ifelse(transitioned == 1 & !!sym(paste0("X", fire_year-1)) == !!sym(paste0("X", year)), 1, 0))
+# }
+# 
+# value_df_trans <- value_df %>%
+#   filter(transitioned == 1)
+# 
+# 
+# # Construct the column name dynamically
+# column_name <- paste0("X", pre_fire_year)
+# 
+# # Use sym and !! to dynamically refer to the column name in filter
+# value_df_trans_con <- value_df_trans %>%
+#   filter(!!sym(column_name) == 7)
+# 
+# 
+# # Add distance_class column
+# value_df_trans_con <- value_df_trans_con %>%
+#   mutate(distance_class = case_when(
+#     !!sym(paste0("X", num, "_DUnburned")) >= 0 & !!sym(paste0("X", num, "_DUnburned")) < 150 ~ '0-150',
+#     !!sym(paste0("X", num, "_DUnburned")) >= 150 & !!sym(paste0("X", num, "_DUnburned")) < 300 ~ '150-300',
+#     !!sym(paste0("X", num, "_DUnburned")) >= 300 ~ '>300'
+#   ))
+# 
+# # Calculate the total counts for each distance_class
+# total_counts <- value_df_trans_con %>%
+#   group_by(distance_class) %>%
+#   summarize(total_count = n(), .groups = 'drop')
+# 
+# # Create an empty list to store the summary data frames
+# summary_list <- list()
+# 
+# # Loop over the range of columns from 3 to 30
+# for (i in 2:(2023-fire_year)) {
+#   column_name <- paste0("trans_returned_to_preFire_veg", i)
+#   summary_df <- value_df_trans_con %>%
+#     group_by(distance_class, !!sym(column_name)) %>%
+#     summarize(count = n(), .groups = 'drop') %>%
+#     left_join(total_counts, by = "distance_class") %>%
+#     mutate(proportion = count / total_count)
+#   
+#   summary_df <- summary_df %>%
+#     mutate(years = i)
+#   
+#   names(summary_df)[names(summary_df) == column_name] <- "trans_preFire"
+#   
+#   summary_list[[column_name]] <- summary_df
+# }
+# 
+# summary_df_combined <- do.call(rbind, summary_list)
+# 
+# summary_df_trans_1 <- summary_df_combined %>%
+#   filter(trans_preFire == 1) %>%
+#   mutate(distance_class = factor(distance_class, levels = c('0-150', '150-300', '>300')))
+}
+```
+
+# Conifer transition/ recovery
+
+```{r}
+# Vegetation transition and recovery metrics in megafires
+
+recovery_metrics_mega <- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/RF_recovery_metrics_mega_1985_2020.csv", header=TRUE)
+
+
+recovery_metrics_mega <- recovery_metrics_mega %>%
+  mutate(rdnbr_class = case_when(
+    rdnbr_class == 1 ~ 'low',
+    rdnbr_class == 2 ~ 'moderate',
+    rdnbr_class == 3 ~ 'high',
+    TRUE ~ as.character(rdnbr_class)  # Keep other values unchanged
+  ))
+
+
+plot_16_1 <-ggplot(recovery_metrics_mega, aes(x = factor(rdnbr_class, levels=c("low","moderate","high")), y = percent_conifer_transition, fill=rdnbr_class)) +
+  geom_boxplot() +
+  labs(x = "Burn Severity Class [rdnbr]", y = "Proportion of Conifer Transition") +
+  ggtitle("Proportion Conifer Transition by Burn Severity Class")+
+  scale_fill_manual(values =c("low"="#fde725","moderate"="#21918c","high"="#440154"))+
+  theme_classic()
+
+plot_16_1
+
+
+plot_16_2 <-ggplot(recovery_metrics_mega, aes(x = factor(rdnbr_class, levels=c("low","moderate","high")), y = percent_conifer_recov_2yr)) +
+  geom_boxplot() +
+  ylim(c(0,1.5))+
+  labs(x = "Burn Severity Class", y = "Percent Conifer Recovery after 2 years") +
+  scale_fill_manual(values =c("low"="#fde725","moderate"="#21918c","high"="#440154"))+
+  ggtitle("% Conifer Transition by Burn Severity Class")
+
+plot_16_2
+
+
+recovery_metrics_mega_long <- recovery_metrics_mega %>%
+  pivot_longer(
+    cols = starts_with("percent_conifer_recov"),
+    names_to = "recovery_period",
+    values_to = "percent_conifer_recov"
+  )
+
+recovery_metrics_mega_long <- recovery_metrics_mega_long %>%
+  mutate(rdnbr_class = case_when(
+    rdnbr_class == 1 ~ 'low',
+    rdnbr_class == 2 ~ 'moderate',
+    rdnbr_class == 3 ~ 'high',
+    TRUE ~ as.character(rdnbr_class)  # Keep other values unchanged
+  ))
+
+plot_16_3 <- ggplot(recovery_metrics_mega_long,aes(x=factor(rdnbr_class, levels=c('low','moderate','high')),y=percent_conifer_recov,fill=factor(recovery_period,levels = c("percent_conifer_recov_2yr", "percent_conifer_recov_3yr", "percent_conifer_recov_5yr","percent_conifer_recov_10yr"))))+
+  geom_boxplot()+
+  #ylim(c(0,1.5))+
+  scale_fill_manual(values =c('#b6cab7','#6e9570','#3e7241','#0e4f12'),name = "time post fire", labels = c('2 years',"3 years", "5 years","10 years"))+
+  ylab("proportion of conifer recovery")+xlab("rdnbr class")+labs(fill="")+
+  theme_classic()
+  #+geom_signif(
+  #  comparisons = list(c("low", "moderate"), c("moderate", "high")), map_signif_level = TRUE)
+
+plot_16_3
+
+
+plot_16_4 <-ggplot(recovery_metrics_mega, aes(x = factor(rdnbr_class), y = percent_of_total_burned)) +
+  geom_boxplot() +
+  labs(x = "Burn Severity Class", y = "Percent of total fire area")
+
+plot_16_4
+
+plot_16_5 <-ggplot(recovery_metrics_mega, aes(x = factor(rdnbr_class), y = percent_conifer_burned)) +
+  geom_boxplot() +
+  labs(x = "Burn Severity Class", y = "Proportion of conifer burned in severity class")
+
+plot_16_5
+
+plot_16_6 <- ggplot(recovery_metrics_mega, aes(x = absolute_con_burned, y = absolute_con_trans, fill=factor(rdnbr_class))) +
+  geom_point() +
+  labs(x = "X-axis label", y = "Y-axis label", title = "Scatter Plot")
+
+plot_16_6
+
+recovery_metrics_mega_long$rdnbr_class <- factor(recovery_metrics_mega_long$rdnbr_class, levels = c('low', 'moderate','high'))
+
+```
+
+```{r}
+patch_metrics_mega_recovery <- fread("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/SN_patches_mega_rdnbr_highSev_1985_2020_recovery.csv")
+
+patch_metrics_mega_recovery_sel_abs <- patch_metrics_mega_recovery[,c('n','mean_rdnbr','count_RF_pre_veg_7','count_RF_post1_veg_7','count_RF_post2_veg_7','count_RF_post3_veg_7','count_RF_post5_veg_7','count_RF_post10_veg_7')]
+
+
+
+# Transform the dataframe to long format
+patch_metrics_mega_recovery_long_abs <- patch_metrics_mega_recovery_sel_abs %>%
+  pivot_longer(
+    cols = starts_with("count_RF_post"),  # Columns to pivot into long format
+    names_to = "time_period",             # Name of the new column to store the original column names
+    values_to = "post_con_count"          # Name of the new column to store the values
+  )
+
+patch_metrics_mega_recovery_sel_rel <- patch_metrics_mega_recovery[,c('n','mean_rdnbr','core_area','prop_recov2','prop_recov3','prop_recov5','prop_recov10')]
+
+
+# Transform the dataframe to long format
+patch_metrics_mega_recovery_long_prop <- patch_metrics_mega_recovery_sel_rel %>%
+  pivot_longer(
+    cols = starts_with("prop_recov"),  # Columns to pivot into long format
+    names_to = "time_period",             # Name of the new column to store the original column names
+    values_to = "prop_recovered"          # Name of the new column to store the values
+  )
+
+patch_metrics_mega_recovery_long_prop$time_period <- factor(patch_metrics_mega_recovery_long_prop$time_period, levels= c('prop_recov2','prop_recov3','prop_recov5','prop_recov10'))
+
+patch_metrics_mega_recovery_long_prop <- patch_metrics_mega_recovery_long_prop %>%
+  mutate(n_bins = cut(n,
+                      breaks = c(1, 100, 1000,10000,1500000),
+                      labels = c("small","medium","large","very large"),
+                      include.lowest = TRUE))
+
+patch_metrics_mega_recovery_long_prop <- patch_metrics_mega_recovery_long_prop %>%
+  mutate(core_area_class = cut(core_area,
+                      breaks = c(0,1, 100, 1000,1500000),
+                      labels = c("none","small","medium","large"),
+                      include.lowest = TRUE))
+
+
+
+grouped_boxplot <- ggplot(patch_metrics_mega_recovery_long_prop, aes(x = n_bins, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Patch size class",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_classic() +
+  scale_fill_manual(values = c("#c9eac6",'#b6cab7','#6e9570','#3e7241','#0e4f12')) 
+
+plot(grouped_boxplot)
+
+plot_16_4 <- ggplot(patch_metrics_mega_recovery_long_prop, aes(x = core_area_class, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Core area class",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_classic() +
+  scale_fill_manual(values = c("#c9eac6",'#b6cab7','#6e9570','#3e7241','#0e4f12')) 
+
+plot_16_4
+
+
+ggplot(patch_metrics_mega_recovery_long, aes(x = count_RF_pre_veg_7, y = post_con_count, alpha=0.01)) +
+  geom_point() +
+  xlim(0,10000)+
+  ylim(0,10000)+
+  labs(title = "Scatter Plot of Pre- and Post-Vegetation Counts",
+       x = "Pre-Vegetation Count (RF Pre Veg 7)",
+       y = "Post-Vegetation Count (RF Post1 Veg 7)") +
+  theme_bw()+
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "solid", size = 1) 
+
+
+ggplot(patch_metrics_mega_recovery_long, aes(x = count_RF_pre_veg_7, y = post_con_count, color = factor(time_period), alpha = 0.01)) +
+  geom_point() +
+  xlim(0, 10000) +
+  ylim(0, 10000) +
+  labs(title = "Scatter Plot of Pre- and Post-Vegetation Counts",
+       x = "Pre-Vegetation Count (RF Pre Veg 7)",
+       y = "Post-Vegetation Count (RF Post1 Veg 7)") +
+  theme_classic() +
+  scale_color_manual(values = c('count_RF_post1_veg_7'="#c9eac6",'count_RF_post2_veg_7'= '#a0bb9e','count_RF_post3_veg_7'= '#788c76','count_RF_post5_veg_7'= '#505d4f','count_RF_post10_veg_7'= '#282e27'))+  # Replace with the correct number of colors
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "solid", size = 1)
+
+
+
+
+
+patch_metrics_mega_recovery_long_prop <- fread("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/SN_patch_metrics_mega_1985_2020_rdnbr_recovery_long.csv")
+
+patch_metrics_mega_recovery_long_prop$time_period <- factor(patch_metrics_mega_recovery_long_prop$time_period, levels= c(2:37))
+
+patch_metrics_mega_recovery_long_prop$n_bins <- factor(patch_metrics_mega_recovery_long_prop$n_bins, levels= c("small","medium","large","very large"))
+
+# Create a custom color palette with 35 colors
+custom_palette <- colorRampPalette(c("#f8fff4", "#0e4f12"))(35)
+
+plot_16_5 <- ggplot(patch_metrics_mega_recovery_long_prop, aes(x= time_period, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Years post fire",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_pubr()+
+  facet_wrap(~n_bins)+
+  scale_fill_manual(values = custom_palette)+
+  theme(legend.position = "none")+
+  scale_x_discrete(breaks = as.character(2:35), labels = as.character(2:35)) +  # Set x-axis labels from 2 to 37
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Angle the x-axis labels
+
+
+plot_16_5
+
+# Create a custom color palette with 35 colors
+custom_palette <- colorRampPalette(c("#f8fff4", "#0e4f12"))(35)
+
+
+patch_metrics_mega_recovery_long_prop_37928 <- patch_metrics_mega_recovery_long_prop %>%
+  filter(OBJECTID == 37928)
+
+plot_16_5_37928 <- ggplot(patch_metrics_mega_recovery_long_prop_37928, aes(x= time_period, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Years post fire",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_pubr()+
+  facet_wrap(~n_bins)+
+  scale_fill_manual(values = custom_palette)+
+  theme(legend.position = "none")+
+  scale_x_discrete(breaks = as.character(2:35), labels = as.character(2:35)) +  # Set x-axis labels from 2 to 37
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Angle the x-axis labels
+
+
+plot_16_5_37928
+
+patch_metrics_mega_recovery_long_prop_37959 <- patch_metrics_mega_recovery_long_prop %>%
+  filter(OBJECTID == 37959)
+
+plot_16_5_37959 <- ggplot(patch_metrics_mega_recovery_long_prop_37959, aes(x= time_period, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Years post fire",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_pubr()+
+  facet_wrap(~n_bins)+
+  scale_fill_manual(values = custom_palette)+
+  theme(legend.position = "none")+
+  scale_x_discrete(breaks = as.character(2:35), labels = as.character(2:35)) +  # Set x-axis labels from 2 to 37
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Angle the x-axis labels
+
+
+plot_16_5_37959
+
+patch_metrics_mega_recovery_long_prop_37989 <- patch_metrics_mega_recovery_long_prop %>%
+  filter(OBJECTID == 37989)
+
+plot_16_5_37989 <- ggplot(patch_metrics_mega_recovery_long_prop_37989, aes(x= time_period, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Years post fire",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_pubr()+
+  facet_wrap(~n_bins)+
+  scale_fill_manual(values = custom_palette)+
+  theme(legend.position = "none")+
+  scale_x_discrete(breaks = as.character(2:35), labels = as.character(2:35)) +  # Set x-axis labels from 2 to 37
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Angle the x-axis labels
+
+
+plot_16_5_37989
+
+
+patch_metrics_mega_recovery_long_prop_35322 <- patch_metrics_mega_recovery_long_prop %>%
+  filter(OBJECTID == 35322)
+
+plot_16_5_35322 <- ggplot(patch_metrics_mega_recovery_long_prop_35322, aes(x= time_period, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Years post fire",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_pubr()+
+  facet_wrap(~n_bins)+
+  scale_fill_manual(values = custom_palette)+
+  theme(legend.position = "none")+
+  scale_x_discrete(breaks = as.character(2:35), labels = as.character(2:35)) +  # Set x-axis labels from 2 to 37
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Angle the x-axis labels
+
+
+plot_16_5_35322
+
+patch_metrics_mega_recovery_long_prop_35312 <- patch_metrics_mega_recovery_long_prop %>%
+  filter(OBJECTID == 35312)
+
+plot_16_5_35312 <- ggplot(patch_metrics_mega_recovery_long_prop_35312, aes(x= time_period, y = prop_recovered, fill = time_period)) +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  ylim(0,1)+
+  labs(title = "",
+       x = "Years post fire",
+       y = "Proportion conifer recovered") +
+  stat_summary(fun = mean, geom = "point", shape = 20, size = 3, color = "red", position = position_dodge(width = 0.75)) +
+  theme_pubr()+
+  facet_wrap(~n_bins)+
+  scale_fill_manual(values = custom_palette)+
+  theme(legend.position = "none")+
+  scale_x_discrete(breaks = as.character(2:35), labels = as.character(2:35)) +  # Set x-axis labels from 2 to 37
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Angle the x-axis labels
+
+
+plot_16_5_35312
+
+
+```
+
+```{r}
+# 16_3, but only high severity but for patch size classes
+patch_metrics_mega <- patch_metrics_mega %>%
+  mutate(n_bins = cut(n,
+                      breaks = c(1, 100, 1000,10000,1500000),
+                      labels = c("small","medium","large","very large"),
+                      include.lowest = TRUE))
+
+
+
+#recovery_metrics_mega_long <- recovery_metrics_mega %>%
+#  pivot_longer(
+#    cols = starts_with("percent_conifer_recov"),
+#    names_to = "recovery_period",
+#    values_to = "percent_conifer_recov"
+#  )
+
+
+####### This doesn't work yet!!
+recovery_metrics_mega_long <- recovery_metrics_mega %>%
+  pivot_longer(
+    cols = starts_with("percent_conifer_recov"),
+    names_to = "recovery_period",
+    values_to = "percent_conifer_recov"
+  )
+
+recovery_metrics_mega_long <- recovery_metrics_mega_long %>%
+  mutate(rdnbr_class = case_when(
+    rdnbr_class == 1 ~ 'low',
+    rdnbr_class == 2 ~ 'moderate',
+    rdnbr_class == 3 ~ 'high',
+    TRUE ~ as.character(rdnbr_class)  # Keep other values unchanged
+  ))
+
+
+plot_16_3 <- ggplot(recovery_metrics_mega_long,aes(x=factor(rdnbr_class, levels=c('low','moderate','high')),y=percent_conifer_recov,fill=factor(recovery_period,levels = c("percent_conifer_recov_2yr", "percent_conifer_recov_3yr", "percent_conifer_recov_5yr","percent_conifer_recov_10yr"))))+
+  geom_boxplot()+
+  ylim(c(0,1.5))+
+  scale_fill_manual(values =c('#b6cab7','#6e9570','#3e7241','#0e4f12'),name = "time post fire", labels = c('2 years',"3 years", "5 years","10 years"))+
+  ylab("Proportion of conifer recovery")+xlab("RdNBR class")+labs(fill="")
+  #+geom_signif(
+  #  comparisons = list(c("low", "moderate"), c("moderate", "high")), map_signif_level = TRUE)
+
+plot_16_3
+```
+
+```{r}
+# Calculate distance from unburned, and how much total area at risk of not recovering for all megafires
+
+# Define the megafire IDs
+megafire_IDs <- c(21678, 21679, 21683, 21684, 21688, 21786, 21791, 22057, 22060, 28976, 30032, 32384, 33025, 33113, 
+                  33252, 35032, 35053, 35312, 35322, 35874, 36180, 36404, 37023, 37098, 37928, 37959, 37989, 38018, 
+                  38120, 38341, 38923, 39327, 39335, 39356, 39424, 39430, 39674, 39683, 39756, 39762, 39763, 40325, 
+                  40570, 40705, 40882, 41219, 41262, 41627, 41747, 41837, 41925, 42055, 42350, 42380, 42387, 42745)
+
+# Initialize an empty dataframe to store results
+results_df <- data.frame(
+  fire_id = integer(),
+  distance_category = character(),
+  count = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (id in megafire_IDs){
+  
+  rastname <- paste0('C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Megafires/dist_unburned_conifer_7/',id,'_7.tif')
+  distance_rast <- rast(rastname)
+  
+  # Load added severity/ veg type
+  rastname <- paste0('C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/GIS/Megafires/dist_unburned_conifer_8/',id,'_clipped.tif')
+  veg_sev_rast <- rast(rastname)
+
+  # I only want pixels with value == 10 ; those are high severity conifer pixels
+
+  # Step 1: Mask veg_sev_rast to only keep pixels with value 10
+  veg_sev_rast[veg_sev_rast != 10] <- NA
+
+  # Step 2: Resample distance_rast to match veg_sev_rast resolution and extent
+  distance_rast <- resample(distance_rast, veg_sev_rast, method = "near")
+
+  # Step 3: Create a mask where veg_sev_rast == 10
+  mask_raster <- veg_sev_rast == 10
+
+  # Step 4: Apply the mask to distance_rast to retain only the pixels where veg_sev_rast == 10
+  result_raster <- mask(distance_rast, mask_raster)
+
+  raster_df <- as.data.frame(result_raster, xy = TRUE, na.rm = TRUE)
+
+
+  # Create a new column to represent distance categories for the legend
+  raster_df$distance_category <- ifelse(raster_df[,3] == 0, NA,  # NA for 0 values
+                                  ifelse(raster_df[,3] < 150, "Below 150", "Above 150"))
+
+  raster_df_filtered <- raster_df %>%
+    filter(!is.na(distance_category))
+  
+  # Count the number of pixels in each distance category
+  category_counts <- raster_df_filtered %>%
+    group_by(distance_category) %>%
+    summarize(count = n())
+  
+  # Add fire_id to the counts
+  category_counts <- category_counts %>%
+    mutate(fire_id = id)
+  
+  # Append the result to the overall dataframe
+  results_df <- bind_rows(results_df, category_counts)
+}
+results_bu <- results_df
+results_df <- results_df %>%
+  left_join(yrs_ids, by = c("fire_id" = "OBJECTID"))
+results_df$area_ha <- results_df$count*0.09
+
+
+# Box Plot to summarize area distribution
+ggplot(results_df, aes(x = distance_category, y = area_ha, fill = distance_category)) +
+  geom_boxplot() +
+  scale_fill_manual(
+    values = c("Below 150" = "grey", "Above 150" = "orange"),
+    name = "Distance Category"
+  ) +
+  labs(
+    title = "Distribution of Burned Area by Distance Category",
+    x = "Distance Category",
+    y = "Area Burned (ha)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none"
+  )
+
+library(forcats)
+library(scales)
+
+# Load the Megafire Attributes dataframe
+megafire_attributes <- read.csv("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/megafire_attributes.csv")
+
+results_df <- results_df %>%
+  rename(OBJECTID = fire_id)
+# Merge the results_df with the Megafire Attributes to add the fire name
+results_df <- merge(results_df, megafire_attributes[, c("OBJECTID", "FIRE_NAME")], by = "OBJECTID")
+
+
+
+# Create a new column in the dataframe combining FIRE_NAME and yrs
+results_df <- results_df %>%
+  mutate(FIRE_NAME_WITH_YEAR = paste0(FIRE_NAME, " (", yrs, ")"))
+
+# Plot with the updated FIRE_NAME_WITH_YEAR column
+plot_61_2 <- ggplot(results_df, aes(x = fct_reorder(as.factor(FIRE_NAME_WITH_YEAR), yrs), y = area_ha, fill = distance_category)) +
+  geom_bar(stat = "identity", position = "dodge") +  # "dodge" places the bars side by side
+  scale_fill_manual(
+    values = c("Below 150" = "grey", "Above 150" = "orange"),
+    name = "Distance from live conifer",
+    labels = c("less than 150m", "further than 150m")
+  ) +
+  labs(
+    title = "",
+    x = "Fire name (sorted by year)",
+    y = "Area burned (ha)"
+  ) +
+  scale_y_continuous(labels = scales::comma) +  # Add thousands separators
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Angle x-axis labels to 45 degrees
+    legend.position = c(0.05, 0.95),  # Move the legend inside the plot, top left
+    legend.justification = c(0, 1),  # Adjust the alignment of the legend
+    legend.title = element_text(size = 12), #, face = "bold"
+    legend.text = element_text(size = 10),
+    panel.grid = element_blank()  # Remove all gridlines
+  )
+
+results_df_distance_cat <- results_df %>%
+  group_by(distance_category) %>%
+  summarize(total_count = sum(count))
+
+results_df_distance_cat$area_ha <- 0.09*results_df_distance_cat$total_count
+
+# --> Total hectares of conifer forest burned at high severity in megafires 1985-2020: 333,129
+# Of that: 118,190 ha (35.48%) further than 150m from live conifer
+# 214,939 ha (64.52%)closer than 150m to live conifer 
+
+# Group by 'yrs' and 'distance_category', then summarize by summing 'area_ha'
+results_df_summary <- results_df %>%
+  group_by(year, distance_category) %>%
+  summarize(total_area_ha = sum(area_ha, na.rm = TRUE))
+
+
+# Plot the results as a bar chart
+plot_61_1 <- ggplot(results_df_summary, aes(x = as.factor(year), y = total_area_ha, fill = distance_category)) +
+  geom_bar(stat = "identity", position = "dodge") +  # "dodge" places the bars side by side
+  scale_fill_manual(
+    values = c("Below 150" = "grey", "Above 150" = "orange"),
+    name = "Distance from live conifer",
+    labels = c( "further than 150m","less than 150m")
+  ) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "",
+    x = "Year",
+    y = "Total coniferous burned area (ha)"
+  ) +
+  #theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Angle x-axis labels to 45 degrees
+    legend.position = c(0.05, 0.95),  # Move the legend inside the plot, top left
+    legend.justification = c(0, 1),  # Adjust the alignment of the legend
+    legend.title = element_text(size = 12), #, face = "bold"
+    legend.text = element_text(size = 10),
+    panel.grid = element_blank()  # Remove all gridlines
+  )
+
+
+
+```
+
+```{r}
+# Patch recovery of the largest patches only
+patch_metrics_largest <- patch_metrics_mega %>%
+  filter(n > 4555)
+
+# Only high severity
+patch_metrics_largest_HS <- patch_metrics_largest %>%
+  filter(rdnbr_class == 3)
+
+# Step 1: Read all TIFF files in the folder and create a stack
+tif_folder <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/3310_veg_classification_annual"
+tif_files <- list.files(tif_folder, pattern = "\\.tif$", full.names = TRUE)
+
+# Stack all TIFF files
+raster_stack <- rast(tif_files)
+
+# Step 2: Load the shapefile for clipping
+large_HS_patches_shp <- vect("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Basefiles/large_HS_patches.shp")
+
+# Step 3: Clip the raster stack to the shapefile
+clipped_stack <- crop(raster_stack, large_HS_patches_shp) # Crop to bounding box of shapefile
+masked_stack <- mask(clipped_stack, large_HS_patches_shp) # Mask out areas outside the shapefile
+
+# Step 4: Save the clipped stack to a new folder (optional)
+output_folder <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/patch_recovery/"
+dir.create(output_folder, showWarnings = FALSE)
+
+# Write each layer of the clipped stack to a separate file
+for (i in 1:nlyr(masked_stack)) {
+  writeRaster(masked_stack[[i]], 
+              filename = file.path(output_folder, paste0("clipped_layer_", i, ".tif")),
+              overwrite = TRUE)
+}
+
+# Optional: Visualize the clipped stack
+plot(masked_stack)
+```

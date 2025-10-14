@@ -1,0 +1,14 @@
+# ignore big / derived stuff
+Data/
+Outputs/
+Figures/
+*.tif
+*.tiff
+*.zip
+*.rds
+*.rdata
+*.csv
+*.gpkg
+*.geotiff
+*.jp2
+*.nc

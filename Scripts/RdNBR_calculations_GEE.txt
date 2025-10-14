@@ -1,0 +1,279 @@
+// Script adapted from Rodman et al. (2024), Forest Ecology and Management to just export RdNBR
+// RdNBR is clipped to the fire scar geometry, rather than the bounding polygon for higher efficiency
+
+////////////////////////////   Get RdNBR for each fire    //////////////////////////////////
+//
+// Script adapted from the following paper, but adjusted for use with Landsat 9 and
+// Collection 2 data
+//
+//        Parks SA, Holsinger LM, Voss MA, Loehman RA, Robinson NP. 2018. Mean composite fire severity metrics 
+//        computed with Google Earth Engine offer improved accuracy and expanded mapping potential. 
+//        Remote Sensing 2018, 10, 879. Available at - https://www.mdpi.com/2072-4292/10/6/879
+// 
+
+/////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////// 
+/////////////////////////////////////////////////////////////////////////////////////
+// Fire Severity metrics created include:
+//    dNBR:        delta normalized burn ratio
+//    RdNBR:       relativezed delta normalized burn ratio
+//    RBR:         relativized burn ratio
+//    dNBRoffset:  dNBR with an offset to account for inter-annual differences in phenology between pre- and post-fire imagery.
+//    RdNBRoffset: RdNBR with offset (as above)
+//    RBRoffset:   RBR with offset (as above)
+
+////////////////////// IMPORTANT - PLEASE READ BELOW ////////////////////////////////
+// 1) When 'Run' Button is hit, it may take a few minutes to populate tasks 
+//    and the browser may become unresponsive. In this case, the browser 
+//    will bring up an option to 'Wait' while list of tasks are completed, 
+//    which should be confirmed.
+//
+// 2) Create a folder called 'RdNBR_new' in Google Drive before running exports,
+//    otherwise, an error 'More than one folder with specified name [fires] found'
+//    may occur.
+/////////////////////////////////////////////////////////////////////////////////////
+
+//--------------------       INPUTS       ------------------------------//
+// import shapefile with fire polygons as a feature collection called 'fires' - these must have the following standard attributes  
+//    as distributed by MTBS:  Event_ID and Fire_Year.
+//    Note, we use Fire_ID as unique identifier rather than 'Fire_Name' attribute which has duplicate names for different fires.
+
+// specify fire severity metrics to create
+var bandList = ['rdnbr']; //is it 'RdNBR' or 'rdnbr' ?
+Map.addLayer(fires)
+
+// Enter beginning and end days for imagery season as julian dates
+var startday = 166;
+var endday = 305;
+
+//--------------------     PROCESSING     ----------------------------//
+//-------- Initialize variables for fire perimeters  -----------------//
+// create two lists: one with fire names and the other with fire IDs 
+var fireID  = ee.List(fires.aggregate_array('Event_ID')).getInfo();
+var nFires = fireID.length;
+
+//------------------- Image Processing for Fires Begins Here -------------//
+// Landsat 5, 7, and 8 Surface Reflectance Tier 1 collections
+var ls9SR = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2'),
+    ls8SR = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2'),
+    ls7SR = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2'),
+    ls5SR = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2'),
+    ls4SR = ee.ImageCollection('LANDSAT/LT04/C02/T1_L2');
+    
+/////////////////////////////////
+// FUNCTIONS TO CREATE NBR
+/////////////////////////////////
+
+// Returns vegetation indices for LS8 and LS9
+var ls8_9_Indices = function(lsImage){
+  var reflBands = lsImage.select(['SR_B5', 'SR_B7'])
+                        .multiply(0.0000275).subtract(0.2) // Rescaling to reflectance
+  var nbr = reflBands.normalizedDifference(['SR_B5', 'SR_B7']).toFloat();
+  var qa = lsImage.select(['QA_PIXEL']);
+  var rad = lsImage.select(['QA_RADSAT']);
+  return nbr.addBands([qa])
+          .addBands([rad])
+          .select([0,1,2], ['nbr', 'QA_PIXEL', 'QA_RADSAT'])
+          .copyProperties(lsImage, ['system:time_start']);
+  };
+  
+// Returns vegetation indices for LS4, LS5 and LS7
+var ls4_7_Indices = function(lsImage){
+  var reflBands = lsImage.select(['SR_B4', 'SR_B7'])
+                        .multiply(0.0000275).subtract(0.2) // Rescaling to reflectance
+  var nbr = reflBands.normalizedDifference(['SR_B4', 'SR_B7']).toFloat();
+  var qa = lsImage.select(['QA_PIXEL']);
+  var rad = lsImage.select(['QA_RADSAT']);
+  return nbr.addBands([qa])
+          .addBands([rad])
+          .select([0,1,2], ['nbr', 'QA_PIXEL', 'QA_RADSAT'])
+          .copyProperties(lsImage, ['system:time_start']);
+  };
+
+// Mask Landsat surface reflectance images
+// Creates a mask for clear pixels 
+var lsCfmask = function(lsImg){
+  // Setting mask criteria from QA bands
+    // Pixel saturation?
+  var saturationMask = lsImg.select('QA_RADSAT').eq(0);
+    // Invalid cover types
+  var qa = lsImg.select(['QA_PIXEL']);
+  var fill = (1 << 0); // Criteria for filled pixel
+  var dilatedCloud = (1 << 1); // Criteria for dilated cloud
+  var cirrus = (1 << 2); // Criteria for cirrus
+  var cloud = (1 << 3); // Criteria for cloud
+  var cloudShadow = (1 << 4); // Criteria for cloud shadow
+  var snow = (1 << 5); // Criteria for snow
+  var water = (1 << 7); // Criteria for water
+    
+  // make the cover mask using above info. Make sure all of these == 0 in PIXEL_QA
+  var mask = qa.bitwiseAnd(dilatedCloud).eq(0)
+               .and(qa.bitwiseAnd(fill).eq(0))
+               .and(qa.bitwiseAnd(cirrus).eq(0))
+               .and(qa.bitwiseAnd(cloud).eq(0))
+               .and(qa.bitwiseAnd(cloudShadow).eq(0))
+               .and(qa.bitwiseAnd(snow).eq(0))
+               .and(qa.bitwiseAnd(water).eq(0));
+
+  // Applying saturation and cover masks and returning NBR
+  return lsImg.updateMask(saturationMask)
+              .updateMask(mask)
+              .select(['nbr'])                                    
+              .copyProperties(lsImg, ['system:time_start']);
+};
+
+// Map functions across Landsat Collections
+var ls9 = ls9SR.map(ls8_9_Indices)
+                .map(lsCfmask);
+var ls8 = ls8SR.map(ls8_9_Indices)
+                .map(lsCfmask);
+var ls7 = ls7SR.map(ls4_7_Indices)
+                .map(lsCfmask); 
+var ls5 = ls5SR.map(ls4_7_Indices)
+                .map(lsCfmask); 
+var ls4 = ls4SR.map(ls4_7_Indices)
+                .map(lsCfmask); 
+                
+// Merge Landsat Collections
+var lsCol = ee.ImageCollection(ls9.merge(ls8).merge(ls7).merge(ls5).merge(ls4));
+
+// ------------------ Create and Export Fire Severity Imagery for each fire -----------------//
+var indices = ee.ImageCollection(fires.map(function(ft){
+  // use 'Fire_ID' as unique identifier
+  var fName = ft.get("Event_ID");
+
+  // select fire
+  var fire = ft;
+  var fireBounds = ft.geometry(); //.bounds()
+  
+  // create pre- and post-fire NBR imagery
+  var fireYear = ee.Date.parse('YYYY', fire.get('Fire_Year'));
+  var preFireYear = fireYear.advance(-1, 'year');
+  var postFireYear = fireYear.advance(1, 'year');
+  var preFireIndices = lsCol.filterBounds(fireBounds)
+                          .filterDate(preFireYear, fireYear)
+                          .filter(ee.Filter.dayOfYear(startday, endday))
+                          .mean()
+                          .rename('preNBR');
+ 
+  var postFireIndices = lsCol.filterBounds(fireBounds)
+                          .filterDate(postFireYear, fireYear.advance(2, 'year'))
+                          .filter(ee.Filter.dayOfYear(startday, endday))
+                          .mean()
+                          .rename('postNBR');
+                          
+  var fireIndices = preFireIndices.addBands(postFireIndices);
+  
+  // create fire severity indices    
+  // calculate dNBR  
+  var burnIndices = fireIndices.expression(
+              "(b('preNBR') - b('postNBR')) * 1000")
+              .rename('dnbr').toFloat().addBands(fireIndices);
+
+  // calculate dNBR with Offset developed from 180-m ring outside the fire perimeter
+  var ring   = fire.buffer(180).difference(fire);
+  var burnIndices2 = ee.Image.constant(ee.Number(burnIndices.select('dnbr').reduceRegion({
+      reducer: ee.Reducer.mean(),
+      geometry: ring.geometry(),
+      scale: 30,
+      maxPixels: 1e9
+    }).get('dnbr'))).rename('offset').toFloat().addBands(burnIndices); 
+
+  var burnIndices3 = burnIndices2.expression(
+            "b('dnbr') - b('offset')").
+            rename('dnbr_w_offset').toFloat().addBands(burnIndices2);
+
+  // calculate RBR  
+  var burnIndices4 = burnIndices3.expression(
+            "b('dnbr') / (b('preNBR') + 1.001)")
+            .rename('rbr').toFloat().addBands(burnIndices3);
+  
+  // calculate RBR with offset
+  var burnIndices5 = burnIndices4.expression(
+            "b('dnbr_w_offset') / (b('preNBR') + 1.001)")
+            .rename('rbr_w_offset').toFloat().addBands(burnIndices4);
+
+  // calculate RdNBR
+  var burnIndices6 = burnIndices5.expression(
+            "abs(b('preNBR')) < 0.001 ? 0.001" + 
+            ": b('preNBR')")
+            .abs().sqrt().rename('preNBR2').toFloat().addBands(burnIndices5);
+            
+  var burnIndices7 = burnIndices6.expression(
+            "b('dnbr') / b('preNBR2')")
+            .rename('rdnbr').toFloat().addBands(burnIndices6);
+
+  // calculate RdNBR with offset
+  var burnIndices8 = burnIndices7.expression(
+            "b('dnbr_w_offset') / b('preNBR2')")
+            .rename('rdnbr_w_offset').toFloat().addBands(burnIndices7);
+
+  burnIndices8 = burnIndices8.select(bandList);
+  return burnIndices8.set({
+                        'fireID' : ft.get('Event_ID'),
+                        'fireName' : ft.get('Event_Name'),
+                        'fireYear' : ft.get('Fire_Year')
+  }); 
+}));
+
+// // Export fire indices for each fire  
+var nBands = bandList.length;
+
+for (var j = 0; j < nFires; j++){
+  var id   = fireID[j];
+  var Name = id;
+  var fireExport = ee.Image(indices.filterMetadata('fireID', 'equals', id).first());
+  var fireBounds = ee.Feature(fires.filterMetadata('Event_ID', 'equals', id).first()).geometry(); //.bounds()
+  var fireExport=fireExport.clip(fireBounds);
+  
+// Reproject the final mosaiced image to EPSG:3310 with a scale of 30 meters
+  var fireExport = fireExport.reproject({
+    crs: 'EPSG:3310',
+    scale: 30  // Landsat resolution
+  });
+  
+  for (var i = 0; i < nBands; i++) {
+    var bandExport = bandList[i];  
+    var exportImg = fireExport.select(bandExport);
+    Export.image.toDrive({
+      image: exportImg,
+      description: Name,
+      fileNamePrefix: Name,
+      maxPixels: 1e13,
+      scale: 30,
+      crs: "EPSG:3310", // Using California Albers Equal Area Conic (NAD83)
+      folder: 'RdNBR_new',      
+      region: fireBounds//fireBounds
+  }); 
+}
+}
+
+// Classifying and visualising RdNBR for the last fire in the list, to see if the calculations worked properly
+
+// Create a classified image where each RdNBR value is assigned to a specific range
+var classifiedRdnbr = fireExport.select('rdnbr').expression(
+  "b('rdnbr') <= 69 ? 2" +                 // Class 1: -15000 to -100
+  ": (b('rdnbr') > 69 && b('rdnbr') <= 316) ? 3" +   // Class 3: 100 to 270
+  ": (b('rdnbr') > 316 && b('rdnbr') <= 641) ? 4" +   // Class 4: 270 to 660
+  ": 5" // Class 5: > 660
+);
+
+// Define a palette corresponding to each class
+var rdnbrPalette = [
+  //'#D9DDDC',   // Class 1: -15000 to -100
+  'darkgrey',  // Class 2: -100 to 100
+  '#F6BE00',   // Class 3: 100 to 270
+  '#21918c',   // Class 4: 270 to 660
+  '#440154'    // Class 5: > 660
+];
+
+// Visualization parameters for the classified RdNBR
+var rdnbrVizParams = {
+  min: 1,       // Min class value
+  max: 5,       // Max class value
+  palette: rdnbrPalette
+};
+
+// Add the classified RdNBR burn severity layer to the map
+Map.addLayer(classifiedRdnbr, rdnbrVizParams, 'Classified RdNBR Burn Severity');
+
