@@ -1,0 +1,123 @@
+// ===================================================================
+// PRISM climate anomaly calculation for the Sierra Nevada region - 
+// creates yearly composites for 1983-2024
+
+// Code by Johanna Schönecker 
+// Edited 7th February 2025
+// ===================================================================
+
+// 📥 Inputs needed
+// Polygon specifying the study region, called 'outline'
+
+// Outputs: One multiband image (.tif) per year from 1983-2024 with PRISM mean annual climate data for the variables 
+// tmean, tmax, tdmean, vpdmin and vpdmax, and total ppt in a given year.
+// Files are saved to a google drive folder 'prism_annual' which needs to be created before running the download.
+
+// ===================================================================
+
+
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var outline = /* color: #d63000 */ee.Geometry.Polygon(
+        [[[-120.8710036034716, 42.16787975263084],
+          [-120.8819899315966, 41.89859489109639],
+          [-120.8380446190966, 41.78400825565575],
+          [-120.9698805565966, 41.677422687385736],
+          [-121.1676344628466, 41.66921647297587],
+          [-121.3873610253466, 41.702035053127204],
+          [-121.5191969628466, 41.66921647297587],
+          [-121.6070875878466, 41.554219637374125],
+          [-121.5521559472216, 41.23279090958586],
+          [-122.0904860253466, 41.23279090958586],
+          [-122.2552809472216, 41.059055906779165],
+          [-122.2223219628466, 40.884860787973246],
+          [-122.4200758690966, 40.668553749462156],
+          [-122.4090895409716, 40.44318218529183],
+          [-122.2882399315966, 40.14150757661077],
+          [-121.4972243065966, 39.11769936078576],
+          [-121.3214430565966, 38.630171932049564],
+          [-121.1896071190966, 38.47552183023822],
+          [-120.9808668847216, 37.879620334989234],
+          [-120.2557692284716, 37.21764097844631],
+          [-119.6185621972216, 36.74372363663089],
+          [-119.1681227440966, 36.27571906787678],
+          [-119.0362868065966, 35.911740767874335],
+          [-119.0143141503466, 35.438740456097484],
+          [-118.8165602440966, 35.21465583847567],
+          [-118.3221754784716, 34.97194780714196],
+          [-117.9925856347216, 34.94493568334335],
+          [-117.6849684472216, 35.82271011795483],
+          [-117.6300368065966, 36.620374910160315],
+          [-117.8937086815966, 36.78772879803939],
+          [-117.9376539940966, 37.252628434131424],
+          [-118.0475172753466, 37.331290822481904],
+          [-118.2342848534716, 37.905630350234595],
+          [-118.7506422753466, 38.24292345349216],
+          [-118.7616286034716, 38.32915812904794],
+          [-118.9044508690966, 38.37223703865445],
+          [-119.0033278222216, 38.389461426339956],
+          [-119.3109450097216, 38.698798488383325],
+          [-119.4098219628466, 38.75022523474965],
+          [-119.6954664940966, 39.01534001866941],
+          [-119.9042067284716, 39.040943768984086],
+          [-120.0360426659716, 38.96410469897705],
+          [-120.1019606347216, 39.0835960733985],
+          [-119.9042067284716, 39.22842107890716],
+          [-119.8273024315966, 39.82161363680751],
+          [-119.6185621972216, 39.796295090121454],
+          [-119.6185621972216, 40.06587859771481],
+          [-119.8932204003466, 40.225441145770525],
+          [-119.8602614159716, 40.56013621487578],
+          [-119.7284254784716, 40.61853674813748],
+          [-119.7943434472216, 40.97616321041663],
+          [-119.8602614159716, 41.059055906779165],
+          [-119.9261793847216, 41.22452825332868],
+          [-119.9151930565966, 42.086398767625425],
+          [-120.4315504784716, 42.102703348458775],
+          [-120.6952223534716, 42.23298907471271]]]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+
+for (var i = 1983; i < 2023; i++) {
+  
+var start_date=i+"-01-01"
+var end_date=i+"-12-31"
+
+var prism_tmean = ee.ImageCollection('OREGONSTATE/PRISM/AN81m').filterBounds(outline).filterDate(start_date, end_date).select('tmean')
+var prism_tmean_reduced=prism_tmean.reduce(ee.Reducer.mean())
+
+var prism_tmax = ee.ImageCollection('OREGONSTATE/PRISM/AN81m').filterBounds(outline).filterDate(start_date, end_date).select('tmax')
+var prism_tmax_reduced=prism_tmax.reduce(ee.Reducer.mean())
+
+var prism_tmin = ee.ImageCollection('OREGONSTATE/PRISM/AN81m').filterBounds(outline).filterDate(start_date, end_date).select('tmin')
+var prism_tmin_reduced=prism_tmin.reduce(ee.Reducer.mean())
+
+var prism_tdmean = ee.ImageCollection('OREGONSTATE/PRISM/AN81m').filterBounds(outline).filterDate(start_date, end_date).select('tdmean')
+var prism_tdmean_reduced=prism_tdmean.reduce(ee.Reducer.mean())
+
+var prism_vpdmin = ee.ImageCollection('OREGONSTATE/PRISM/AN81m').filterBounds(outline).filterDate(start_date, end_date).select('vpdmin')
+var prism_vpdmin_reduced=prism_vpdmin.reduce(ee.Reducer.mean())
+
+var prism_vpdmax = ee.ImageCollection('OREGONSTATE/PRISM/AN81m').filterBounds(outline).filterDate(start_date, end_date).select('vpdmax')
+var prism_vpdmax_reduced=prism_vpdmax.reduce(ee.Reducer.mean())
+
+var prism_ppt = ee.ImageCollection('OREGONSTATE/PRISM/AN81m').filterBounds(outline).filterDate(start_date, end_date).select('ppt')
+var prism_ppt_reduced=prism_ppt.reduce(ee.Reducer.sum())
+
+var combined = prism_tmean_reduced.addBands(prism_tmax_reduced);
+var combined = combined.addBands(prism_tmin_reduced);
+var combined = combined.addBands(prism_tdmean_reduced);
+var combined = combined.addBands(prism_vpdmin_reduced);
+var combined = combined.addBands(prism_vpdmax_reduced);
+var combined = combined.addBands(prism_ppt_reduced);
+print(combined);
+
+var filename="prism_annual_"+i;
+
+Export.image.toDrive({
+image: combined.toFloat(),
+description: filename,
+region: outline,
+crs:'EPSG:3310',
+folder: 'prism_annual',
+maxPixels: 1e9,
+fileFormat: 'GeoTIFF'})
+}

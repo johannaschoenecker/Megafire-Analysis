@@ -1,0 +1,188 @@
+Code by Johanna Schönecker
+
+Edited 15 October 2025
+
+This quarto document contains code to load and pre-process pixel-, fire- and patch-level data for megafires in the Sierra Nevada ecoregion which burned between 1985 and 2023.
+
+Different sections contain code to calculate/ analyse different landscape patch metrics
+
+##Packages
+
+```{r Loading packages}
+# -------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyr, raster, rgdal, ggplot2, ggspatial, sp, sf, rgeos, reshape,
+  patchwork, Rcpp, scales, dplyr, ggpubr, landscapemetrics, landscapetools,
+  here, stringr, moments, reshape2, ggeasy, vctrs, mgcv, networkD3,
+  ggridges, cowplot, factoextra, gdistance, fs, data.table, terra,
+  gridExtra, grid, car, biscale, e1071, scales, devEMF
+)
+
+```
+
+##Data loading and prep
+
+```{r section-chunk2}
+#Fire level datasets
+fire_metrics_mega <- fread(paste0(here(),"/Data/SN_megafires_1985_2023.csv"), header=TRUE)
+
+#Patch level datasets- rdnbr
+patch_metrics_mega <- fread(paste0(here(),"/Data/SN_patch_metrics_mega_rdnbr_1985_2023.csv"))
+
+megafire_IDs <- c(5529, 5718, 5721, 8026, 7808, 7747, 7996, 7961, 
+                   7412, 7514, 7242, 9714, 9724, 9487, 8985, 9039, 
+                   8747, 10495, 10498, 10504, 10094, 10273, 1819, 1772, 
+                   2111, 2140, 1210, 1211, 1216, 1215, 1220, 1319, 
+                   1315, 718, 911, 932, 869, 888, 945, 959, 504, 
+                   3363, 3567, 3573, 3574, 3051, 3094, 3188, 2706, 
+                   2147, 2531, 2415, 2618, 5207, 5309, 4277, 4285, 
+                   4306, 4380, 4386, 4374, 4500, 3983, 3992)
+```
+
+
+#AWMPS- area weighted mean patch size
+
+```{r section-chunk6}
+# -------------------------------------------------------------------
+# Function to calculate AWMPS for a given set of patch areas
+# -------------------------------------------------------------------
+
+calculate_awmps <- function(patch_areas) {
+  total_area <- sum(patch_areas)
+  awmps <- sum(patch_areas^2) / total_area
+  return(awmps)
+}
+
+# -------------------------------------------------------------------
+# Create empty dataframe to store results
+# -------------------------------------------------------------------
+patch_size_aw_mega <- data.frame(
+  rdnbr_class = integer(),
+  AWMPS       = numeric(),
+  OBJECTID    = integer()
+)
+
+# -------------------------------------------------------------------
+# Loop through each megafire ID and calculate AWMPS
+# -------------------------------------------------------------------
+for (i in megafire_IDs) {
+  
+  patch_metrics_indiv <- patch_metrics_mega %>%
+    filter(OBJECTID == i)
+  
+  # Calculate AWMPS for each severity class
+  awmps_by_class <- patch_metrics_indiv %>%
+    group_by(rdnbr_class) %>%
+    summarise(AWMPS = calculate_awmps(n), .groups = "drop")
+  
+  awmps_by_class$OBJECTID <- i
+  
+  patch_size_aw_mega <- rbind(patch_size_aw_mega, awmps_by_class)
+}
+
+# -------------------------------------------------------------------
+# Clean and recode severity classes
+# -------------------------------------------------------------------
+patch_size_aw_mega <- patch_size_aw_mega %>%
+  filter(rdnbr_class != -1) %>%
+  mutate(
+    rdnbr_class = as.character(rdnbr_class),
+    rdnbr_class = dplyr::recode(
+      rdnbr_class,
+      "1" = "low",
+      "2" = "moderate",
+      "3" = "severe"
+    ),
+    awmps_ha = AWMPS * 0.09
+  )
+
+
+```
+
+# LPI
+
+```{r lpi-chunk1}
+# -------------------------------------------------------------------
+# Calculate the LPI for every class in every megafire
+# -------------------------------------------------------------------
+
+# Path to classified RdNBR rasters
+raster_dir <- paste0(here(),"/Data/Rasters/RdNBR_classified")
+
+# List all .tif raster files in the folder
+raster_files <- fs::dir_ls(raster_dir, regexp = "\\.tif$")
+
+# Function to calculate LPI per class for a raster
+calculate_lpi <- function(file_path) {
+  # Load raster
+  rast_obj <- terra::rast(file_path)
+
+  # Convert to RasterLayer (landscapemetrics prefers Raster*)
+  rast_r <- raster::raster(rast_obj)
+
+  # Calculate LPI for each class
+  lpi_result <- landscapemetrics::lsm_c_lpi(rast_r)
+
+  # Add raster name to identify the source
+  lpi_result$raster_name <- basename(file_path)
+
+  lpi_result
+}
+
+# Apply to all rasters and combine
+lpi_list <- lapply(raster_files, calculate_lpi)
+lpi_df   <- dplyr::bind_rows(lpi_list)
+
+# -------------------------------------------------------------------
+# Prepare a wide table for supplement
+# -------------------------------------------------------------------
+
+# Step 1: Extract fire ID from raster_name and join fire names
+lpi_df <- lpi_df %>%
+  dplyr::mutate(
+    OBJECTID = as.numeric(stringr::str_remove(raster_name, "\\.tif$"))
+  ) %>%
+  dplyr::left_join(
+    fire_metrics_mega %>% dplyr::select(OBJECTID, FIRE_NAME),
+    by = "OBJECTID"
+  )
+
+# Step 2: Recode class into labels
+lpi_df <- lpi_df %>%
+  dplyr::mutate(
+    class_label = dplyr::case_when(
+      class == 0 ~ "Unchanged",
+      class == 1 ~ "Low",
+      class == 2 ~ "Moderate",
+      class == 3 ~ "High",
+      TRUE       ~ as.character(class)
+    )
+  )
+
+# Step 3: Summarise to one row per fire with total value per class
+lpi_summary <- lpi_df %>%
+  dplyr::group_by(FIRE_NAME, class_label) %>%
+  dplyr::summarise(total_value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(
+    names_from  = class_label,
+    values_from = total_value
+  ) %>%
+  dplyr::rename(`Fire name` = FIRE_NAME) %>%
+  dplyr::select(`Fire name`, Unchanged, Low, Moderate, High) %>%
+  dplyr::left_join(
+    fire_metrics_mega %>% dplyr::select(FIRE_NAME, YEAR_),
+    by = c("Fire name" = "FIRE_NAME")
+  ) %>%
+  dplyr::rename(`Fire year` = YEAR_) %>%
+  dplyr::select(`Fire name`, `Fire year`, Unchanged, Low, Moderate, High)
+
+# Write CSV
+data.table::fwrite(
+  lpi_summary, paste0(here(),"/Outputs/LPI_all_megafires.csv")
+)
+
+
+```

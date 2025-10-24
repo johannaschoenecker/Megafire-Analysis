@@ -1,0 +1,3827 @@
+Code by Johanna Schönecker
+
+Edited 15 October 2025
+
+This quarto document contains code to load and pre-process pixel-, fire- and patch-level data for megafires in the Sierra Nevada ecoregion which burned between 1985 and 2023.
+
+Different sections contain code to produce figures.
+
+##Packages
+
+```{r Loading packages}
+# -------------------------------------------------------------------
+# Load required packages
+# -------------------------------------------------------------------
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyr, raster, rgdal, ggplot2, ggspatial, sp, sf, rgeos, reshape,
+  patchwork, Rcpp, scales, dplyr, ggpubr, landscapemetrics, landscapetools,
+  here, stringr, moments, reshape2, ggeasy, vctrs, mgcv, networkD3,
+  ggridges, cowplot, factoextra, gdistance, fs, data.table, terra,
+  gridExtra, grid, car, biscale, e1071, scales, devEMF
+)
+
+```
+
+##Data loading and prep
+
+```{r section-chunk2}
+#Fire level datasets
+fire_metrics_mega <- fread(paste0(here(),"/Data/SN_megafires_1985_2023.csv"), header=TRUE)
+
+#Patch level datasets- rdnbr
+patch_metrics_mega <- fread(paste0(here(),"/Data/SN_patch_metrics_mega_rdnbr_1985_2023.csv"))
+
+megafire_IDs <- c(5529, 5718, 5721, 8026, 7808, 7747, 7996, 7961, 
+                   7412, 7514, 7242, 9714, 9724, 9487, 8985, 9039, 
+                   8747, 10495, 10498, 10504, 10094, 10273, 1819, 1772, 
+                   2111, 2140, 1210, 1211, 1216, 1215, 1220, 1319, 
+                   1315, 718, 911, 932, 869, 888, 945, 959, 504, 
+                   3363, 3567, 3573, 3574, 3051, 3094, 3188, 2706, 
+                   2147, 2531, 2415, 2618, 5207, 5309, 4277, 4285, 
+                   4306, 4380, 4386, 4374, 4500, 3983, 3992)
+```
+
+
+#Figure 1bc- Megafire temporal trends
+
+```{r figure_1bc, warning=FALSE, message=FALSE}
+# -------------------------------------------------------------------------
+# Find out area burned annually in normal & megafires
+# -------------------------------------------------------------------------
+
+SN_fires_attr_all <- fread(paste0(here(), "/Data/SN_all_fires_1985_2023.csv"), header = TRUE)
+SN_fires_attr_mega <- fire_metrics_mega
+
+# Summarize total area burned per year
+area_burned_all_annual <- SN_fires_attr_all %>%
+  group_by(YEAR_) %>%
+  summarise(total_burned_area = sum(Shape_Area, na.rm = TRUE))
+
+# Summarize total megafire area per year
+area_burned_mega_annual <- SN_fires_attr_mega %>%
+  group_by(YEAR_) %>%
+  summarise(mega_area = sum(Shape_Area, na.rm = TRUE))
+
+# Combine both summaries
+area_burned_combined <- area_burned_all_annual %>%
+  left_join(area_burned_mega_annual, by = "YEAR_") %>%
+  mutate(mega_area = ifelse(is.na(mega_area), 0, mega_area))
+
+# Calculate small fire area
+area_burned_combined$small_area <- area_burned_combined$total_burned_area - area_burned_combined$mega_area
+
+# -------------------------------------------------------------------------
+# Megafire counts and total burned area
+# -------------------------------------------------------------------------
+
+mega_counts_area <- data.frame(
+  year = c(
+    1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994,
+    1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
+    2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014,
+    2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023
+  ),
+  count_mega = c(
+    0, 0, 4, 1, 0, 2, 0, 1, 0, 2, 0, 1, 0, 0, 3, 2, 1, 2, 0, 0,
+    0, 0, 2, 3, 0, 0, 1, 6, 2, 3, 2, 2, 4, 4, 1, 7, 7, 1, 0
+  ),
+  area_burned = area_burned_combined$total_burned_area
+)
+
+mega_counts_area$area_burned_ha <- mega_counts_area$area_burned * 0.0001
+
+# -------------------------------------------------------------------------
+# Linear model: area burned vs. number of megafires
+# -------------------------------------------------------------------------
+
+model <- lm(area_burned_ha ~ count_mega, data = mega_counts_area)
+
+# Predictions + confidence intervals
+mega_counts_area$predictions <- predict(model, newdata = mega_counts_area, type = "response")
+confidence_data <- predict(model, newdata = mega_counts_area, interval = "confidence", level = 0.95)
+
+mega_counts_area$lower_bound <- confidence_data[, "lwr"]
+mega_counts_area$upper_bound <- confidence_data[, "upr"]
+
+# -------------------------------------------------------------------------
+# Convert wide to long for stacked area plot
+# -------------------------------------------------------------------------
+
+area_burned_long <- area_burned_combined %>%
+  dplyr::select(-total_burned_area) %>%
+  pivot_longer(
+    cols = c(mega_area, small_area),
+    names_to = "size_class",
+    values_to = "area"
+  ) %>%
+  mutate(size_class = ifelse(size_class == "mega_area", "mega", "small"))
+
+# -------------------------------------------------------------------------
+# Plot: relationship between number of megafires and total area burned
+# -------------------------------------------------------------------------
+
+plot_1a <- ggplot(mega_counts_area, aes(x = count_mega, y = area_burned_ha)) +
+  geom_point(aes(color = "Data"), alpha = 1.0, size = 3.5) +
+  geom_line(aes(y = predictions, color = "Fitted"), size = 1) +
+  geom_ribbon(aes(ymin = lower_bound, ymax = upper_bound), fill = "darkgrey", alpha = 0.3) +
+  scale_color_manual(values = c("Data" = "black", "Fitted" = "black")) +
+  labs(x = "Number of megafires in a fire year", y = "Area burned (×1000 ha)") +
+  scale_y_continuous(labels = scales::label_number(scale = 1 / 1000, suffix = "", accuracy = 1)) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.title.y = element_text(color = "black", size = 18),
+    axis.title.x = element_text(color = "black", size = 18),
+    axis.text = element_text(size = 14, face = "bold")
+  )
+
+# Add R² annotation
+rsq <- summary(model)$r.squared
+plot_1a <- plot_1a +
+  annotate(
+    "text",
+    x = max(mega_counts_area$count_mega),
+    y = min(mega_counts_area$area_burned_ha),
+    label = paste("R =", round(rsq, 4)),
+    hjust = 1, vjust = -1,
+    color = "black", size = 8
+  )
+
+print(plot_1a)
+
+# -------------------------------------------------------------------------
+# Plot: annual area burned by fire size class and number of megafires
+# -------------------------------------------------------------------------
+
+area_burned_long <- area_burned_combined %>%
+  pivot_longer(
+    cols = c(mega_area, small_area),
+    names_to = "type",
+    values_to = "area"
+  ) %>%
+  mutate(area_ha = area / 10000)
+
+plot_1b <- ggplot() +
+  geom_bar(
+    data = area_burned_long,
+    aes(x = YEAR_, y = area_ha, fill = type),
+    stat = "identity"
+  ) +
+  geom_point(
+    data = mega_counts_area,
+    aes(x = year, y = count_mega * 100000),
+    size = 3, color = "black", alpha = 1.0
+  ) +
+  geom_smooth(
+    data = mega_counts_area,
+    aes(x = year, y = count_mega * 100000),
+    method = "glm",
+    method.args = list(family = "poisson"),
+    se = TRUE, color = "black"
+  ) +
+  scale_x_continuous(name = "Fire year", limits = c(1984, 2023)) +
+  scale_y_continuous(
+    name = "Area burned (×1000 ha)",
+    labels = scales::label_number(scale = 1 / 1000, suffix = "", accuracy = 1),
+    limits = c(0, 700000),
+    sec.axis = sec_axis(~ . / 100000, name = "Number of megafires")
+  ) +
+  scale_fill_manual(values = c("small_area" = "#E17327", "mega_area" = "#932191")) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.title.y = element_text(color = "black", size = 18),
+    axis.title.y.right = element_text(color = "black", size = 18),
+    axis.title.x = element_text(color = "black", size = 18),
+    axis.text = element_text(size = 14, face = "bold"),
+    legend.position = "none"
+  ) +
+  labs(fill = "Fire Size")
+
+print(plot_1b)
+
+# -------------------------------------------------------------------------
+# Combine both plots into one figure
+# -------------------------------------------------------------------------
+
+library(cowplot)
+
+figure_1 <- plot_grid(
+  plot_1b, plot_1a,
+  ncol = 1,
+  align = "v",
+  labels = c("b", "c"),
+  label_size = 16
+)
+
+print(figure_1)
+
+```
+
+# Figure 2a- Patch area/ size (cumulative)
+
+```{r figure_2a, warning=FALSE, message=FALSE}
+# -------------------------------------------------------------------
+# Patch sizes and area by patch size class, all patches
+# -------------------------------------------------------------------
+
+# Bin 'n' and prepare dataset
+patch_metrics_mega <- patch_metrics_mega %>%
+  mutate(
+    n_bins = cut(
+      n,
+      breaks = c(1, 100, 1000, 10000, 1500000),
+      labels = c("small", "medium", "large", "very large"),
+      include.lowest = TRUE
+    )
+  )
+
+patch_metrics_mega$area_ha       <- patch_metrics_mega$n * 0.09
+patch_metrics_mega$outer_area_ha <- patch_metrics_mega$area_ha - patch_metrics_mega$core_area
+
+# Step 1: Pivot to long format for stacked bars
+patch_long <- patch_metrics_mega %>%
+  pivot_longer(
+    cols      = c(core_area, outer_area_ha),
+    names_to  = "area_type",
+    values_to = "area_val"
+  )
+
+# Step 2: Summarise total area per bin and type
+patch_summary <- patch_long %>%
+  group_by(n_bins, area_type) %>%
+  summarise(total_area = sum(area_val, na.rm = TRUE), .groups = "drop")
+
+# Step 3: Totals, counts, and cumulative areas per bin
+patch_counts <- patch_metrics_mega %>%
+  group_by(n_bins) %>%
+  summarise(count = n(), .groups = "drop")
+
+patch_totals <- patch_summary %>%
+  group_by(n_bins) %>%
+  summarise(total_area_sum = sum(total_area), .groups = "drop") %>%
+  left_join(patch_counts, by = "n_bins") %>%
+  arrange(as.numeric(n_bins)) %>%
+  mutate(cumulative_area = cumsum(total_area_sum))
+
+patch_core_cumulative <- patch_summary %>%
+  filter(area_type == "core_area") %>%
+  arrange(as.numeric(n_bins)) %>%
+  group_by(n_bins) %>%
+  summarise(core_area_total = sum(total_area, na.rm = TRUE), .groups = "drop") %>%
+  mutate(cumulative_core_area = cumsum(core_area_total))
+
+patch_outer_cumulative <- patch_summary %>%
+  filter(area_type == "outer_area_ha") %>%
+  arrange(as.numeric(n_bins)) %>%
+  group_by(n_bins) %>%
+  summarise(outer_area_total = sum(total_area, na.rm = TRUE), .groups = "drop") %>%
+  mutate(cumulative_outer_area = cumsum(outer_area_total))
+
+# Step 4: Plot
+figure_2a <- ggplot(patch_summary, aes(x = as.factor(n_bins), y = total_area, fill = area_type)) +
+  geom_bar(stat = "identity") +
+
+  # Count labels
+  geom_text(
+    data = patch_totals,
+    aes(x = as.factor(n_bins), y = total_area_sum, label = scales::comma(count)),
+    vjust = -0.5, size = 3.5, inherit.aes = FALSE
+  ) +
+
+  # Cumulative total area line
+  geom_line(
+    data = patch_totals,
+    aes(x = as.factor(n_bins), y = cumulative_area, group = 1),
+    color = "darkred", size = 1, inherit.aes = FALSE
+  ) +
+  geom_point(
+    data = patch_totals,
+    aes(x = as.factor(n_bins), y = cumulative_area),
+    color = "darkred", size = 2, inherit.aes = FALSE
+  ) +
+
+  # Fill & labels
+  scale_fill_manual(
+    values = c("core_area" = "orange", "outer_area_ha" = "lightgrey"),
+    labels = c("core_area" = "core area", "outer_area_ha" = "outer area"),
+    name   = NULL
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "",
+    x = "Patch size",
+    y = "Total area (ha)",
+    fill = "Area type"
+  ) +
+  theme_classic() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 0, hjust = 1),
+    axis.title       = element_text(face = "bold"),
+    axis.text        = element_text(face = "bold")
+  ) +
+
+  # Cumulative core area (dashed)
+  geom_line(
+    data = patch_core_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_core_area, group = 1),
+    color = "darkorange", size = 1, linetype = "dashed", inherit.aes = FALSE
+  ) +
+  geom_point(
+    data = patch_core_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_core_area),
+    color = "darkorange", size = 2, inherit.aes = FALSE
+  ) +
+
+  # Cumulative outer area (dashed)
+  geom_line(
+    data = patch_outer_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_outer_area, group = 1),
+    color = "grey40", size = 1, linetype = "dashed", inherit.aes = FALSE
+  ) +
+  geom_point(
+    data = patch_outer_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_outer_area),
+    color = "grey40", size = 2, inherit.aes = FALSE
+  ) +
+
+  # Annotations
+  annotate(
+    "text",
+    x = Inf, y = max(patch_totals$cumulative_area, na.rm = TRUE),
+    label = "cumulative total area", color = "darkred",
+    hjust = 1.1, vjust = -0.5, size = 3.5
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = max(patch_core_cumulative$cumulative_core_area, na.rm = TRUE),
+    label = "cumulative core area", color = "darkorange",
+    hjust = 1.1, vjust = -0.5, size = 3.5
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = max(patch_outer_cumulative$cumulative_outer_area, na.rm = TRUE),
+    label = "cumulative outer area", color = "grey40",
+    hjust = 1.1, vjust = -0.5, size = 3.5
+  )
+
+print(figure_2a)
+
+```
+
+# Figure S3- Patch area/ size high sev (cumulative)
+
+```{r figure_S3, warning=FALSE, message=FALSE}
+# -------------------------------------------------------------------
+# Only high severity
+# Patch sizes
+# -------------------------------------------------------------------
+
+# Binning 'n' and preparing the dataset
+patch_metrics_mega <- patch_metrics_mega %>%
+  mutate(
+    n_bins = cut(
+      n,
+      breaks = c(1, 100, 1000, 10000, 1500000),
+      labels = c("small", "medium", "large", "very large"),
+      include.lowest = TRUE
+    )
+  )
+
+patch_metrics_mega$area_ha       <- patch_metrics_mega$n * 0.09
+patch_metrics_mega$outer_area_ha <- patch_metrics_mega$area_ha - patch_metrics_mega$core_area
+
+patch_metrics_mega_sev <- patch_metrics_mega %>%
+  filter(rdnbr_class == 3)
+
+# Step 1: Pivot to long format for stacked bars
+patch_long <- patch_metrics_mega_sev %>%
+  pivot_longer(
+    cols      = c(core_area, outer_area_ha),
+    names_to  = "area_type",
+    values_to = "area_val"      # ← renamed from area_ha
+  )
+
+# Step 2: Summarise total area and patch count per n_bins
+patch_summary <- patch_long %>%
+  group_by(n_bins, area_type) %>%
+  summarise(total_area = sum(area_val, na.rm = TRUE), .groups = "drop")
+
+# Step 3: Calculate cumulative total area and counts per bin (regardless of type)
+patch_counts <- patch_metrics_mega_sev %>%
+  group_by(n_bins) %>%
+  summarise(count = n(), .groups = "drop")
+
+patch_totals <- patch_summary %>%
+  group_by(n_bins) %>%
+  summarise(total_area_sum = sum(total_area), .groups = "drop") %>%
+  left_join(patch_counts, by = "n_bins") %>%
+  arrange(as.numeric(n_bins)) %>%
+  mutate(cumulative_area = cumsum(total_area_sum))
+
+patch_core_cumulative <- patch_summary %>%
+  filter(area_type == "core_area") %>%
+  arrange(as.numeric(n_bins)) %>%
+  group_by(n_bins) %>%
+  summarise(core_area_total = sum(total_area, na.rm = TRUE), .groups = "drop") %>%
+  mutate(cumulative_core_area = cumsum(core_area_total))
+
+patch_outer_cumulative <- patch_summary %>%
+  filter(area_type == "outer_area_ha") %>%
+  arrange(as.numeric(n_bins)) %>%
+  group_by(n_bins) %>%
+  summarise(outer_area_total = sum(total_area, na.rm = TRUE), .groups = "drop") %>%
+  mutate(cumulative_outer_area = cumsum(outer_area_total))
+
+# Step 4: Plot
+figure_S3 <- ggplot(patch_summary, aes(x = as.factor(n_bins), y = total_area, fill = area_type)) +
+  geom_bar(stat = "identity") +
+
+  # Add count labels (from patch_totals)
+  geom_text(
+    data = patch_totals,
+    aes(x = as.factor(n_bins), y = total_area_sum, label = comma(count)),
+    vjust = -0.5, size = 3.5, inherit.aes = FALSE
+  ) +
+
+  # Add cumulative area line (also from patch_totals)
+  geom_line(
+    data = patch_totals,
+    aes(x = as.factor(n_bins), y = cumulative_area, group = 1),  # ← only aesthetics in patch_totals
+    color = "darkred", size = 1, inherit.aes = FALSE
+  ) +
+  geom_point(
+    data = patch_totals,
+    aes(x = as.factor(n_bins), y = cumulative_area),
+    color = "darkred", size = 2, inherit.aes = FALSE
+  ) +
+
+  scale_fill_manual(
+    values = c("core_area" = "orange", "outer_area_ha" = "lightgrey"),
+    labels = c("core_area" = "core area", "outer_area_ha" = "outer area"),
+    name   = NULL  # This removes the title
+  ) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "",
+    x     = "Patch size",
+    y     = "Total area (ha)",
+    fill  = "Area type"
+  ) +
+  theme_classic() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 0, hjust = 1)
+  ) +
+
+  # Add second cumulative line for core area
+  geom_line(
+    data = patch_core_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_core_area, group = 1),
+    color = "darkorange", size = 1, inherit.aes = FALSE, linetype = "dashed"
+  ) +
+  geom_point(
+    data = patch_core_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_core_area),
+    color = "darkorange", size = 2, inherit.aes = FALSE
+  ) +
+
+  # Add cumulative line for outer area
+  geom_line(
+    data = patch_outer_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_outer_area, group = 1),
+    color = "grey40", size = 1, inherit.aes = FALSE, linetype = "dashed"
+  ) +
+  geom_point(
+    data = patch_outer_cumulative,
+    aes(x = as.factor(n_bins), y = cumulative_outer_area),
+    color = "grey40", size = 2, inherit.aes = FALSE
+  ) +
+
+  annotate(
+    "text",
+    x = Inf, y = max(patch_totals$cumulative_area, na.rm = TRUE),
+    label = "cumulative total area", color = "darkred",
+    hjust = 1.1, vjust = -0.5, size = 3.5
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = max(patch_core_cumulative$cumulative_core_area, na.rm = TRUE),
+    label = "cumulative core area", color = "darkorange",
+    hjust = 1.1, vjust = -0.5, size = 3.5
+  ) +
+  annotate(
+    "text",
+    x = Inf, y = max(patch_outer_cumulative$cumulative_outer_area, na.rm = TRUE),
+    label = "cumulative outer area", color = "grey40",
+    hjust = 1.1, vjust = -0.5, size = 3.5
+  )
+
+print(figure_S3)
+
+```
+
+# Figure 3- Patch characteristics
+
+```{r figure_3, warning=FALSE, message=FALSE}
+# -------------------------------------------------------------------
+# Data preparation
+# -------------------------------------------------------------------
+# Bin patch sizes and drop very small patches (n <= 2)
+patch_data <- patch_metrics_mega %>%
+  dplyr::mutate(
+    n_bins = cut(
+      n,
+      breaks = c(1, 100, 1000, 10000, 1500000),
+      labels = c("small", "medium", "large", "very large"),
+      include.lowest = TRUE
+    )
+  ) %>%
+  dplyr::filter(n > 2)
+
+# Optional filter for conifer vegetation
+# patch_data <- patch_data %>% dplyr::filter(mode_veg == 7)
+
+# -------------------------------------------------------------------
+# Create metrics
+# -------------------------------------------------------------------
+# Total core area per patch
+core_area_summary <- patch_data %>%
+  dplyr::group_by(OBJECTID, n_bins, rdnbr_class) %>%
+  dplyr::summarise(core_area_sum = sum(core_area), .groups = "drop")
+
+# Contiguity mean
+contiguity_summary <- patch_data %>%
+  dplyr::group_by(OBJECTID, n_bins, rdnbr_class) %>%
+  dplyr::summarise(contiguity_mean = mean(contiguity), .groups = "drop")
+
+# Perimeter-area ratio mean
+paratio_summary <- patch_data %>%
+  dplyr::group_by(OBJECTID, n_bins, rdnbr_class) %>%
+  dplyr::summarise(perimeter_area_mean = mean(perimeter_area), .groups = "drop")
+
+# -------------------------------------------------------------------
+# Harmonize RdNBR class labels
+# -------------------------------------------------------------------
+recode_rdnbr <- function(df) {
+  df %>%
+    dplyr::filter(rdnbr_class %in% c(1, 2, 3)) %>%
+    dplyr::mutate(
+      rdnbr_class = dplyr::recode(
+        as.character(rdnbr_class),
+        "1" = "low",
+        "2" = "moderate",
+        "3" = "high"
+      ),
+      rdnbr_class = factor(rdnbr_class, levels = c("low", "moderate", "high"))
+    )
+}
+
+core_area_burned  <- recode_rdnbr(core_area_summary)
+contiguity_burned <- recode_rdnbr(contiguity_summary)
+paratio_burned    <- recode_rdnbr(paratio_summary)
+
+# -------------------------------------------------------------------
+# Boxplots of patch metrics by patch size
+# -------------------------------------------------------------------
+# Colors
+rdnbr_colors_named <- c("low" = "#F6BE00", "moderate" = "#21918c", "high" = "#440154")
+rdnbr_colors       <- c("1"   = "#F6BE00", "2"        = "#21918c", "3"   = "#440154")
+
+# Common theme
+box_theme <- ggplot2::theme_classic() +
+  ggplot2::theme(
+    strip.background = ggplot2::element_rect(fill = "lightgrey", color = "grey"),
+    strip.text       = ggplot2::element_text(color = "black"),
+    axis.text        = ggplot2::element_text(face = "bold", size = 18),
+    axis.title       = ggplot2::element_text(size = 20),
+    legend.position  = "none"
+  )
+
+plot_core_area <- ggplot2::ggplot(
+  core_area_burned,
+  ggplot2::aes(x = n_bins, y = core_area_sum, fill = rdnbr_class)
+) +
+  ggplot2::geom_boxplot(alpha = 0.5) +
+  ggplot2::scale_fill_manual(values = rdnbr_colors_named) +
+  ggplot2::labs(x = "Patch size class", y = "Core area within patch (ha)") +
+  ggplot2::coord_cartesian(ylim = c(0, 7500)) +
+  ggplot2::scale_y_continuous(labels = scales::comma) +
+  box_theme
+
+plot_paratio <- ggplot2::ggplot(
+  paratio_burned,
+  ggplot2::aes(x = n_bins, y = perimeter_area_mean, fill = rdnbr_class)
+) +
+  ggplot2::geom_boxplot(alpha = 0.5) +
+  ggplot2::scale_fill_manual(values = rdnbr_colors_named) +
+  ggplot2::labs(x = "Patch size class", y = "Perimeter:area") +
+  box_theme
+
+plot_contiguity <- ggplot2::ggplot(
+  contiguity_burned,
+  ggplot2::aes(x = n_bins, y = contiguity_mean, fill = rdnbr_class)
+) +
+  ggplot2::geom_boxplot(alpha = 0.5) +
+  ggplot2::scale_fill_manual(values = rdnbr_colors_named) +
+  ggplot2::labs(x = "Patch size class", y = "Contiguity") +
+  box_theme
+
+# -------------------------------------------------------------------
+# Patch metrics over time (mean per fire year)
+# -------------------------------------------------------------------
+patch_data <- patch_data %>%
+  dplyr::mutate(rdnbr_class = factor(rdnbr_class))
+
+summary_by_year <- patch_data %>%
+  dplyr::group_by(OBJECTID, rdnbr_class) %>%
+  dplyr::summarise(
+    mean_core_area     = mean(core_area, na.rm = TRUE),
+    mean_perimeter_area = mean(perimeter_area, na.rm = TRUE),
+    mean_contiguity    = mean(contiguity, na.rm = TRUE),
+    fire_year          = mean(fire_year, na.rm = TRUE),
+    .groups            = "drop"
+  )
+
+line_theme <- ggplot2::theme_classic() +
+  ggplot2::theme(
+    axis.text       = ggplot2::element_text(face = "bold"),
+    axis.title      = ggplot2::element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+lineplot_core_area <- ggplot2::ggplot(
+  summary_by_year,
+  ggplot2::aes(x = fire_year, y = mean_core_area, color = rdnbr_class)
+) +
+  ggplot2::geom_point(size = 2.5, alpha = 0.7) +
+  ggplot2::geom_smooth(method = "gam", se = TRUE, alpha = 0.2) +
+  ggplot2::scale_color_manual(values = rdnbr_colors) +
+  ggplot2::labs(y = "Mean core area within patch (ha)", x = "Fire year") +
+  line_theme
+
+lineplot_paratio <- ggplot2::ggplot(
+  summary_by_year,
+  ggplot2::aes(x = fire_year, y = mean_perimeter_area, color = rdnbr_class)
+) +
+  ggplot2::geom_point(size = 2.5, alpha = 0.7) +
+  ggplot2::geom_smooth(method = "gam", se = TRUE, alpha = 0.2) +
+  ggplot2::scale_color_manual(values = rdnbr_colors) +
+  ggplot2::labs(y = "Perimeter:area", x = "Fire year") +
+  line_theme
+
+lineplot_contiguity <- ggplot2::ggplot(
+  summary_by_year,
+  ggplot2::aes(x = fire_year, y = mean_contiguity, color = rdnbr_class)
+) +
+  ggplot2::geom_point(size = 2.5, alpha = 0.7) +
+  ggplot2::geom_smooth(method = "gam", se = TRUE, alpha = 0.2) +
+  ggplot2::scale_color_manual(values = rdnbr_colors) +
+  ggplot2::labs(y = "Contiguity", x = "Fire year") +
+  line_theme
+
+# -------------------------------------------------------------------
+# Combine plots
+# -------------------------------------------------------------------
+# Top row (boxplots)
+top_combined <- cowplot::plot_grid(
+  plot_paratio     + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
+  plot_contiguity  + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
+  plot_core_area   + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
+  labels    = c("A", "B", "C"),
+  label_size = 20,
+  ncol      = 3
+)
+
+# Bottom row (time trends)
+bottom_combined <- cowplot::plot_grid(
+  lineplot_paratio     + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
+  lineplot_contiguity  + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
+  lineplot_core_area   + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
+  labels = c("A", "B", "C"),
+  ncol   = 3
+)
+
+# Shared x-axis labels
+top_labeled <- cowplot::plot_grid(
+  top_combined,
+  grid::textGrob("Patch size class", gp = grid::gpar(fontsize = 20)),
+  ncol = 1, rel_heights = c(1, 0.05)
+)
+
+bottom_labeled <- cowplot::plot_grid(
+  bottom_combined,
+  grid::textGrob("Fire year", gp = grid::gpar(fontface = "bold", fontsize = 12)),
+  ncol = 1, rel_heights = c(1, 0.05)
+)
+
+# Final stack
+final_patch_plots <- cowplot::plot_grid(top_labeled, bottom_labeled, ncol = 1)
+print(final_patch_plots)
+
+# -------------------------------------------------------------------
+# ANOVAs for patch metrics
+# -------------------------------------------------------------------
+# Core area ANOVA
+aov_core <- aov(core_area_sum ~ rdnbr_class * n_bins, data = core_area_burned)
+summary(aov_core)
+
+# Perimeter-area ratio ANOVA
+aov_paratio <- aov(perimeter_area_mean ~ rdnbr_class * n_bins, data = paratio_burned)
+summary(aov_paratio)
+
+# Contiguity ANOVA
+aov_contiguity <- aov(contiguity_mean ~ rdnbr_class * n_bins, data = contiguity_burned)
+summary(aov_contiguity)
+
+# -------------------------------------------------------------------
+# Assumptions checks
+# -------------------------------------------------------------------
+# Normality (example for core area)
+shapiro.test(residuals(aov_core))
+qqnorm(residuals(aov_core)); qqline(residuals(aov_core))
+
+# Homogeneity (Levene's test)
+car::leveneTest(core_area_sum ~ interaction(rdnbr_class, n_bins), data = core_area_burned)
+
+# -------------------------------------------------------------------
+# Tidy ANOVA outputs
+# -------------------------------------------------------------------
+core_tidy        <- broom::tidy(aov_core);        core_tidy$metric        <- "Core area"
+paratio_tidy     <- broom::tidy(aov_paratio);     paratio_tidy$metric     <- "Perimeter-area ratio"
+contiguity_tidy  <- broom::tidy(aov_contiguity);  contiguity_tidy$metric  <- "Contiguity"
+
+anova_summary <- dplyr::bind_rows(core_tidy, paratio_tidy, contiguity_tidy)
+
+print(anova_summary)
+
+# Save boxplots (top row)
+ggplot2::ggsave(
+  filename = file.path(here::here(), "Figures/patches_boxes_new.png"),
+  plot     = top_labeled,
+  width    = 10, height = 7.5, units = "in", dpi = 300
+)
+
+
+```
+
+#Table S5- Patch metrics summary
+
+```{r figure-3-patch-characteristics-chunk2}
+# Bin sizes and compute area (ha)
+patch_metrics_mega <- patch_metrics_mega %>%
+  mutate(
+    n_bins = cut(
+      n,
+      breaks = c(1, 100, 1000, 10000, 1500000),
+      labels = c("small", "medium", "large", "very large"),
+      include.lowest = TRUE
+    ),
+    area_ha = n * 0.09
+  )
+
+# Total area + patch counts by severity × size bin
+patch_summary <- patch_metrics_mega %>%
+  group_by(rdnbr_class, n_bins) %>%
+  summarise(
+    total_area  = sum(area_ha, na.rm = TRUE),
+    patch_count = n(),
+    .groups = "drop"
+  )
+
+# Mean / SD of patch area by severity × size bin
+patch_stats <- patch_metrics_mega %>%
+  group_by(rdnbr_class, n_bins) %>%
+  summarise(
+    mean_area = mean(area_ha, na.rm = TRUE),
+    sd_area   = sd(area_ha, na.rm = TRUE),
+    .groups   = "drop"
+  )
+
+# Patch metrics (means / SDs) by severity × size bin
+patch_metrics_summary <- patch_metrics_mega %>%
+  group_by(rdnbr_class, n_bins) %>%
+  summarise(
+    mean_contiguity      = mean(contiguity, na.rm = TRUE),
+    sd_contiguity        = sd(contiguity, na.rm = TRUE),
+    mean_perimeter_area  = mean(perimeter_area, na.rm = TRUE),
+    sd_perimeter_area    = sd(perimeter_area, na.rm = TRUE),
+    mean_core_area       = mean(core_area, na.rm = TRUE),
+    sd_core_area         = sd(core_area, na.rm = TRUE),
+    .groups              = "drop"
+  ) %>%
+  mutate(
+    # keep formatting step (character output) as in your original
+    mean_core_area = format(mean_core_area, scientific = FALSE),
+    sd_core_area   = format(sd_core_area, scientific = FALSE)
+  )
+
+# Convenience subsets
+patch_metrics_mega_vlarge     <- patch_metrics_mega %>% filter(n_bins == "very large")
+patch_metrics_mega_vlarge_sev <- patch_metrics_mega_vlarge %>% filter(rdnbr_class == 3)
+patch_metrics_mega_sev        <- patch_metrics_mega %>% filter(rdnbr_class == 3)
+
+
+```
+
+
+
+# Figure 4a
+
+```{r figure-4a-chunk1}
+# --- Fire IDs to include -------------------------------------------------------
+fire_IDs <- c(
+  10495, 10498, 10504, 10273, 10094, 9714, 9724, 9487, 8985,
+  9039, 8747, 8026, 7996, 7961, 7808, 7747, 7514, 7412, 7242
+)
+
+# --- Locate and filter CSVs ----------------------------------------------------
+csv_dir   <- file.path(here(), "Data", "raster_df_mega_repeated_planting")
+csv_files <- dir(csv_dir, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
+
+# --- Summarise each fire -------------------------------------------------------
+summary_list <- list()
+
+for (file in csv_files) {
+  fire_id <- as.integer(gsub("\\.csv$", "", basename(file)))
+  dt <- fread(file)
+
+  # Keep pre-fire conifer pixels only
+  dt <- dt[RF_pre_veg == 7]
+
+  # Recovery status
+  dt[, recovery_status := fifelse(
+    transitioned == 0, "Not Transitioned",
+    fifelse(returned == 1 & yrs_to_return < 21, "Recovered ≤ 20 yrs", "Not Recovered")
+  )]
+
+  # Counts by severity × recovery
+  dt_summary <- dt[, .N, by = .(rdnbr_class, recovery_status)]
+  dt_summary[, fire_id := fire_id]
+
+  summary_list[[length(summary_list) + 1]] <- dt_summary
+}
+
+# --- Combine and aggregate -----------------------------------------------------
+final_summary <- rbindlist(summary_list, use.names = TRUE, fill = TRUE)
+
+recovery_summary <- final_summary %>%
+  group_by(rdnbr_class, recovery_status) %>%
+  summarise(count = sum(N), .groups = "drop")
+
+# Area (kha) and percentages (0.09 ha per 30 m pixel)
+df_long <- recovery_summary %>%
+  group_by(rdnbr_class) %>%
+  mutate(
+    total    = sum(count),
+    percent  = 100 * count / total,
+    area_kha = count * 0.09 / 1000
+  ) %>%
+  ungroup()
+
+# Ordered recovery categories for stacking
+df_long$recovery_status <- factor(
+  df_long$recovery_status,
+  levels = c("Not Transitioned", "Not Recovered", "Recovered ≤ 20 yrs")
+)
+
+# Prepare stacked geometry (ymin/ymax)
+df_stacked <- df_long %>%
+  arrange(rdnbr_class, recovery_status) %>%
+  group_by(rdnbr_class) %>%
+  mutate(
+    ymin = cumsum(lag(area_kha, default = 0)),
+    ymax = ymin + area_kha
+  ) %>%
+  ungroup()
+
+# --- Plot ----------------------------------------------------------------------
+custom_colors <- c(
+  "Not Transitioned" = "white",
+  "Not Recovered"    = scales::alpha("darkgrey", 0.9),
+  "Recovered ≤ 20 yrs" = scales::alpha("darkgreen", 0.9)
+)
+
+plot_1 <- ggplot(df_stacked) +
+  geom_rect(
+    aes(
+      xmin = as.numeric(factor(rdnbr_class)) - 0.4,
+      xmax = as.numeric(factor(rdnbr_class)) + 0.4,
+      ymin = ymin,
+      ymax = ymax,
+      fill = recovery_status
+    ),
+    color = "black"
+  ) +
+  scale_fill_manual(values = custom_colors) +
+  scale_x_continuous(
+    breaks = 1:4,
+    labels = c("unchanged", "low", "moderate", "high")
+  ) +
+  labs(
+    x = "Burn severity class",
+    y = "Area (1,000 ha)",
+    fill = "Recovery category",
+    title = NULL
+  ) +
+  theme_classic() +
+  theme(
+    axis.title  = element_text(size = 14),
+    axis.text   = element_text(size = 12),
+    legend.position = "none"
+  )
+
+print(plot_1)
+
+
+```
+
+# Figure 4a Including plantings/ reburns
+
+```{r figure-4a-including-plantings-reburns-chunk1}
+# --- Fire IDs and file paths ---------------------------------------------------
+fire_IDs <- c(
+  10495, 10498, 10504, 10273, 10094, 9714, 9724, 9487, 8985,
+  9039, 8747, 8026, 7996, 7961, 7808, 7747, 7514, 7412, 7242
+)
+
+csv_dir   <- file.path(here(), "Data", "raster_df_mega_repeated_planting")
+csv_files <- dir(csv_dir, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
+
+# --- Summaries holder ----------------------------------------------------------
+summary_list <- list()
+
+# --- Loop through each CSV -----------------------------------------------------
+for (file in csv_files) {
+  fire_id <- as.integer(gsub("\\.csv$", "", basename(file)))
+  dt <- fread(file)
+
+  # Keep pre-fire conifer pixels
+  dt <- dt[RF_pre_veg == 7]
+
+  # Recovery categories (reburn priority)
+  dt[, recovery_status := fifelse(
+    reburn_20yrs == 1, "reburned",
+    fifelse(
+      transitioned == 0, "Not Transitioned",
+      fifelse(
+        tree_planting == 1 & returned == 1, "planted_recovered",
+        fifelse(
+          tree_planting == 1 & returned == 0, "planted_nrecovered",
+          fifelse(
+            tree_planting == 0 & returned == 1 & yrs_to_return < 21,
+            "Recovered ≤ 20 yrs",
+            "Not Recovered"
+          )
+        )
+      )
+    )
+  )]
+
+  # Summarise by severity × recovery
+  dt_summary <- dt[, .N, by = .(rdnbr_class, recovery_status)]
+  dt_summary[, fire_id := fire_id]
+
+  summary_list[[length(summary_list) + 1]] <- dt_summary
+}
+
+# --- Combine summaries ---------------------------------------------------------
+final_summary <- rbindlist(summary_list, use.names = TRUE, fill = TRUE)
+
+# --- Aggregate and compute area (1,000 ha) ------------------------------------
+recovery_summary <- final_summary %>%
+  group_by(rdnbr_class, recovery_status) %>%
+  summarise(count = sum(N), .groups = "drop")
+
+df_long <- recovery_summary %>%
+  group_by(rdnbr_class) %>%
+  mutate(
+    total    = sum(count),
+    percent  = 100 * count / total,
+    area_kha = count * 0.09 / 1000  # 30 m pixels → 0.09 ha → /1000 = thousands of ha
+  ) %>%
+  ungroup()
+
+# Factor levels for legend/stack order
+df_long$recovery_status <- factor(
+  df_long$recovery_status,
+  levels = c(
+    "Not Transitioned",
+    "Recovered ≤ 20 yrs", "planted_recovered", "reburned",
+    "Not Recovered", "planted_nrecovered"
+  )
+)
+
+# --- Stacking geometry ---------------------------------------------------------
+df_stacked <- df_long %>%
+  arrange(rdnbr_class, recovery_status) %>%
+  group_by(rdnbr_class) %>%
+  mutate(
+    ymin = cumsum(lag(area_kha, default = 0)),
+    ymax = ymin + area_kha
+  ) %>%
+  ungroup()
+
+# --- Colours & labels ----------------------------------------------------------
+custom_colors <- c(
+  "Not Transitioned"   = "white",
+  "Not Recovered"      = scales::alpha("darkgrey", 0.9),
+  "Recovered ≤ 20 yrs" = scales::alpha("darkgreen", 0.9),
+  "planted_nrecovered" = "#FF9999",
+  "planted_recovered"  = "#33CC33",
+  "reburned"           = "red"
+)
+
+recovery_labels <- c(
+  "Not Transitioned"   = "Not transitioned",
+  "Not Recovered"      = "Unplanted, not recovered",
+  "Recovered ≤ 20 yrs" = "Unplanted, recovered ≤ 20 yrs",
+  "planted_nrecovered" = "Planted, not recovered",
+  "planted_recovered"  = "Planted, recovered",
+  "reburned"           = "Reburned"
+)
+
+# --- Plot ----------------------------------------------------------------------
+plot_4a <- ggplot(df_stacked) +
+  geom_rect(
+    aes(
+      xmin = as.numeric(factor(rdnbr_class)) - 0.4,
+      xmax = as.numeric(factor(rdnbr_class)) + 0.4,
+      ymin = ymin,
+      ymax = ymax,
+      fill = recovery_status
+    ),
+    color = "black", linewidth = 0.3
+  ) +
+  scale_fill_manual(values = custom_colors, labels = recovery_labels) +
+  scale_x_continuous(
+    breaks = 1:4,
+    labels = c("unchanged", "low", "moderate", "high")
+  ) +
+  labs(
+    x = "Burn severity class",
+    y = "Area (1,000 ha)",
+    fill = "Recovery category",
+    title = NULL
+  ) +
+  theme_classic() +
+  theme(
+    axis.title   = element_text(size = 14),
+    axis.text    = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text  = element_text(size = 11),
+    legend.position = "none"
+  )
+
+
+
+
+```
+
+# Figure 4b- Prop returned by patch size
+
+```{r figure-4b-prop-returned-by-patch-size-chunk1}
+# Fire IDs and file paths
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+csv_dir <- paste0(here(),"/Data/raster_df_mega")
+csv_files <- dir(csv_dir, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
+
+# Store patch-level summaries
+patch_prop_list <- list()
+
+for (file in csv_files) {
+  fire_id <- as.integer(gsub("\\.csv$", "", basename(file)))
+  
+  dt <- fread(file)
+  
+  # Only conifer and transitioned pixels
+  dt <- dt[RF_pre_veg == 7 & transitioned == 1]
+  if (nrow(dt) == 0) next
+  
+  # Recovery within 20 years
+  dt[, returned_20yrs := as.integer(returned == 1 & yrs_to_return < 21)]
+  
+  # Summarise per patch
+  patch_summary <- dt[, .(
+    fire_id = fire_id,
+    n_total = .N,
+    n_returned = sum(returned_20yrs, na.rm = TRUE)
+  ), by = id]
+  
+  patch_summary[, prop_returned := n_returned / n_total]
+  
+  # Assign patch size and class
+  patch_summary[, patch_size_class := cut(
+    n_total,
+    breaks = c(1, 100, 1000, 10000, 1500000),
+    labels = c("small", "medium", "large", "very large"),
+    include.lowest = TRUE
+  )]
+  
+  patch_prop_list[[length(patch_prop_list) + 1]] <- patch_summary
+}
+
+# Combine all patches
+patch_recovery_df <- rbindlist(patch_prop_list)
+
+# Remove any NA patch size classes
+patch_recovery_df <- patch_recovery_df[!is.na(patch_size_class)]
+
+plot_4b <- ggplot(patch_recovery_df, aes(x = patch_size_class, y = prop_returned)) +
+  geom_boxplot(fill = "grey", alpha = 0.4, outlier.size = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 0.8, color = "black") +
+  labs(
+    title = "",
+    x = "Patch size class",
+    y = "Proportion conifer recovered",
+    caption = ""
+  ) +
+  theme_classic()+
+  theme(
+    axis.title = element_text( size = 14), #face = "bold",
+    axis.text = element_text( size = 12),
+    legend.position = "none"
+  )
+
+
+```
+
+# Figure 4b Including plantings/ reburns
+
+```{r figure-4b-including-plantings-reburns-chunk1}
+# Fire IDs and file paths
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+csv_dir <- paste0(here(),"/Data/raster_df_mega_repeated_planting")
+csv_files <- dir(csv_dir, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
+
+# Store patch-level summaries
+patch_prop_list <- list()
+
+for (file in csv_files) {
+  fire_id <- as.integer(gsub("\\.csv$", "", basename(file)))
+  
+  dt <- fread(file)
+  
+  # Only conifer and transitioned pixels and not reburned or planted
+  dt <- dt[RF_pre_veg == 7 & transitioned == 1 & reburn_20yrs == 0 & tree_planting == 0]
+  if (nrow(dt) == 0) next
+  
+  # Recovery within 20 years
+  dt[, returned_20yrs := as.integer(returned == 1 & yrs_to_return < 21)]
+  
+  # Summarise per patch
+  patch_summary <- dt[, .(
+    fire_id = fire_id,
+    n_total = .N,
+    n_returned = sum(returned_20yrs, na.rm = TRUE)
+  ), by = id]
+  
+  patch_summary[, prop_returned := n_returned / n_total]
+  
+  # Assign patch size and class
+  patch_summary[, patch_size_class := cut(
+    n_total,
+    breaks = c(1, 100, 1000, 10000, 1500000),
+    labels = c("small", "medium", "large", "very large"),
+    include.lowest = TRUE
+  )]
+  
+  patch_prop_list[[length(patch_prop_list) + 1]] <- patch_summary
+}
+
+# Combine all patches
+patch_recovery_df <- rbindlist(patch_prop_list)
+
+# Remove any NA patch size classes
+patch_recovery_df <- patch_recovery_df[!is.na(patch_size_class)]
+
+plot_4b <- ggplot(patch_recovery_df, aes(x = patch_size_class, y = prop_returned)) +
+  geom_boxplot(fill = "white", alpha = 0.4, outlier.size = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 0.8, color = "black") +
+  labs(
+    title = "",
+    x = "Patch size class",
+    y = "Proportion conifer recovered",
+    caption = ""
+  ) +
+  theme_classic()+
+  theme(
+    axis.title = element_text( size = 14), #face = "bold",
+    axis.text = element_text( size = 12),
+    legend.position = "none"
+  )
+
+
+```
+
+# Figure S6- RdNBR vegetation histograms all fires
+
+```{r figure-s6-rdnbr-vegetation-histograms-all-fires-chunk1}
+
+
+veg_counts_master <- data.frame(
+  rdnbr = integer(),
+  RF_pre_veg = factor(),
+  OBJECTID = integer()
+)
+
+# -------------------------------------------------------------------------------------------------
+
+for (num in megafire_IDs){
+  
+pixel_filename <- paste0(here(),"/Data/raster_df_mega/",num,".csv")
+pixel_df <- fread(pixel_filename, header=TRUE)  
+
+
+# Calculate the proportions of RF_pre_veg within each rdnbr_class
+pixel_df_summary <- pixel_df %>%
+  dplyr::select(rdnbr, RF_pre_veg)
+
+pixel_df_summary$RF_pre_veg <- as.factor(pixel_df_summary$RF_pre_veg)  
+pixel_df_summary$OBJECTID <-num
+
+veg_counts_master <- rbind(veg_counts_master, pixel_df_summary)
+print(nrow(veg_counts_master))}
+
+veg_counts_master <- subset(veg_counts_master, RF_pre_veg %in% c("1", "4", "5","7","8","9")) 
+
+# Define a named vector with your desired labels
+veg_labels <- c(
+  '1' = "Shrub",
+  '4' = "Open woodland",
+  '5' = "Herbaceous",
+  '7' = "Conifer",
+  '8' = "Sage brush",
+  '9' = "Dense woodland"
+)
+
+ggplot(veg_counts_master, aes(x = rdnbr, fill = RF_pre_veg)) +
+    geom_histogram(position = "identity", bins = 100, alpha = 0.9) +
+    xlim(c(-1000, 2000)) +
+    xlab("Mean burn severity [RdNBR]") +
+    scale_fill_manual(values = c('7' = '#0e4f12','1' = '#956733', '4' = '#d8bf58', '5' = '#6dcd2b','8' = '#7b8d6a', '9' = '#e97451')) +
+    theme_classic() +
+    theme(strip.background = element_rect(fill = "lightgrey", color = "grey"), strip.text = element_text(color = "black")) +
+    theme(legend.position = "none")+
+  facet_wrap(~RF_pre_veg, labeller = labeller(RF_pre_veg = veg_labels))
+
+
+
+### For individual fires only- set fire ID
+# Histograms by veg type
+
+# Set to fire ID of interest
+fire_ID <- 718
+
+pixel_df <- fread(paste0(here(),"/Data/raster_df_mega/",fire_ID,".csv"), header=TRUE)  
+ 
+# Convert burn severity class to factor
+pixel_df$rdnbr_class <- as.factor(pixel_df$rdnbr_class) 
+
+pixels_only_veg <- subset(pixel_df, RF_pre_veg %in% c("1", "4", "5","7","8","9")) 
+pixels_only_veg$RF_pre_veg <- as.factor(pixels_only_veg$RF_pre_veg)
+
+ggplot(pixels_only_veg, aes(x = rdnbr, fill = RF_pre_veg)) +
+    geom_histogram(position = "identity", bins = 100, alpha = 0.4) +
+    xlim(c(-1000, 2000)) +
+    xlab("mean burn severity [rdnbr]") +
+    scale_fill_manual(values = c('7' = '#0e4f12','1' = '#956733', '4' = '#d8bf58', '5' = '#6dcd2b','8' = '#7b8d6a', '9' = '#e97451')) +
+    theme_classic() +
+    theme(strip.background = element_rect(fill = "lightgrey", color = "grey"), strip.text = element_text(color = "black")) +
+    theme(legend.position = "none")+
+  facet_wrap(~RF_pre_veg)
+ 
+```
+
+## Recovery
+
+```{r recovery-chunk1}
+# For 20 year post-fire series: patch size vs. perc. recov after 20 years
+
+patch_metrics_mega <- patch_metrics_mega %>%
+  mutate(n_bins = cut(n,
+                      breaks = c(1, 100, 1000,10000,1500000),
+                      labels = c("small","medium","large","very_large"),
+                      include.lowest = TRUE))
+
+# Select patches with at least 20 years post-fire history
+filtered_patch_metrics <- patch_metrics_mega %>%
+  filter(OBJECTID %in% megafire_IDs)
+
+filtered_patch_metrics$prop_con_trans <- 1- (filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7)
+filtered_patch_metrics$prop_orig_con_1 <- filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_3 <- filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_5 <- filtered_patch_metrics$count_RF_post5_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_10 <- filtered_patch_metrics$count_RF_post10_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_15 <- filtered_patch_metrics$count_RF_post15_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_20 <- filtered_patch_metrics$count_RF_post20_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$abs_con_notRecov_20yrs <- filtered_patch_metrics$count_RF_pre_veg_7 - filtered_patch_metrics$count_RF_post20_veg_7
+
+
+filtered_patch_metrics_HS <- filtered_patch_metrics %>%
+  filter(rdnbr_class==3)
+
+filtered_patch_metrics_5con <- filtered_patch_metrics %>%
+  filter(count_RF_pre_veg_7 > 4)
+
+filtered_patch_metrics_HS_5con <- filtered_patch_metrics_HS %>%
+  filter(count_RF_pre_veg_7 > 4)
+
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  filter(rdnbr_class >0)
+
+# Combine n_bins and rdnbr_class into a single factor for the x-axis
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = interaction(n_bins, rdnbr_class, sep = "_"))
+
+
+# Add spacing to the groups by adding empty levels
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = as.factor(n_bins_rdnbr)) %>%
+  arrange(n_bins_rdnbr, rdnbr_class) %>%
+  mutate(
+    n_bins_rdnbr = factor(n_bins_rdnbr, levels = c(levels(n_bins_rdnbr), "")),  # Add an empty level for gaps
+    rdnbr_class = as.factor(rdnbr_class)  # Ensure rdnbr_class is a factor
+  )
+
+
+# Summarize data for the marginal bar plot
+marginal_data <- filtered_patch_metrics_5con %>%
+  group_by(n_bins_rdnbr) %>%
+  summarize(total_abs_con_notRecov = sum(abs_con_notRecov_20yrs, na.rm = TRUE))
+
+marginal_data$total_abs_con_notRecov_ha <- marginal_data$total_abs_con_notRecov * 0.09
+
+# Inspect unique values in n_bins_rdnbr
+unique_bins <- unique(filtered_patch_metrics_5con$n_bins_rdnbr)
+
+# Reorder levels dynamically based on observed values
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = factor(n_bins_rdnbr, levels = c("small_1","small_2","small_3", "medium_1","medium_2","medium_3", "large_1","large_2","large_3","very_large_1","very_large_2","very_large_3")))  # Replace with actual levels if different
+
+# Update marginal_data with correct levels
+marginal_data <- filtered_patch_metrics_5con %>%
+  group_by(n_bins_rdnbr) %>%
+  summarize(total_abs_con_notRecov = sum(abs_con_notRecov_20yrs, na.rm = TRUE)) %>%
+  mutate(total_abs_con_notRecov_ha = total_abs_con_notRecov * 0.09)
+
+# Recreate boxplot with adjusted order
+boxplot <- ggplot(filtered_patch_metrics_5con, aes(x = n_bins_rdnbr, y = prop_orig_con_20, fill = rdnbr_class)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +  # Slightly transparent boxplot
+  geom_jitter(aes(color = rdnbr_class), width = 0.2, alpha = 0.5, size = 1) +  # Scatter points with jitter
+  stat_summary(
+    fun = mean,  # Calculate the mean
+    geom = "point",  # Add points
+    shape = 18,  # Use a diamond shape for the mean
+    size = 3,  # Adjust size of the mean point
+    color = "red"  # Set color to red
+  ) +
+  labs(
+    x = "n_bins and RDNBR Class",
+    y = "Proportion of Original Conifer (20 Years)"
+  ) +
+  ylim(c(0, 1)) +
+  scale_x_discrete(drop = FALSE) +  # Keep empty levels for gaps
+  scale_fill_manual(values = c("#F6BE00", "#21918c", "#440154", "#F94144")) +  # Custom box colors
+  scale_color_manual(values = c("lightgrey", "lightgrey", "lightgrey", "lightgrey")) +  # Custom scatter colors
+  theme_classic() +
+  theme(
+    legend.position = "none",  # Remove legend
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# Bar plot with adjusted order
+barplot <- ggplot(marginal_data, aes(x = n_bins_rdnbr, y = -total_abs_con_notRecov_ha)) +
+  geom_bar(stat = "identity", fill = "lightgrey", alpha = 0.8) +
+  labs(
+    x = "",
+    y = "Total Abs Con Not Recovered (20 Years, ha)"
+  ) +
+  scale_x_discrete(drop = FALSE) +  # Keep empty levels for gaps
+  theme_classic() +
+  theme(
+    axis.text.x = element_blank(),  # Remove overlapping labels
+    axis.title.x = element_blank(),  # Remove x-axis title
+    axis.text.y = element_text(angle = 45, hjust = 1)
+  )
+
+# Add a title
+title <- ggdraw() + 
+  draw_label(
+    "Boxplot with Custom Order and Marginal Bar Plot",
+    fontface = 'bold',
+    size = 14,
+    hjust = 0.5
+  )
+
+# Combine the plots
+combined_plot <- plot_grid(
+  boxplot, barplot,
+  ncol = 1,
+  rel_heights = c(3, 1)  # Adjust the relative heights
+)
+
+# Add title to the combined plot
+final_plot <- plot_grid(title, combined_plot, ncol = 1, rel_heights = c(0.1, 1))
+
+# Print the combined plot
+print(final_plot)
+
+
+```
+
+
+# Figure 6- Recovery predictions including (excluding) reburns and plantings
+
+```{r figure-6-recovery-predictions-including-excluding-reburns-and-plantings-chunk1}
+### Model considering reburns within 20 years ###
+
+####### For all megafires after 2002
+
+# Load recovery predictions made with RF model
+
+new_data_with_predictions <- fread(paste0(here(),"/Outputs/all_predictions_repeated_planting.csv"))
+
+new_data_with_predictions <- new_data_with_predictions %>%
+  filter(fire_year > 2001)
+
+# Group by fire_year and predicted_class, then summarize the counts
+class_counts <- new_data_with_predictions %>%
+  group_by(fire_year, predicted_class) %>%
+  summarise(count = n(), .groups = "drop")
+
+class_counts$area <- class_counts$count * 0.09
+
+
+####### Read in earlier megafire files as well
+# Directory containing the CSV files
+
+directory <- paste0(here(),"/Data/raster_df_mega_repeated_planting")
+
+# Vector of fire IDs
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+# Get a list of all CSV files in the directory
+csv_files <- list.files(directory, pattern = "\\.csv$", full.names = TRUE)
+
+# Filter files that contain any of the megafire IDs in their filename
+filtered_files <- csv_files[sapply(csv_files, function(file) {
+  fire_id <- as.numeric(str_extract(basename(file), "\\d+")) # Extract numeric ID from filename
+  fire_id %in% fire_IDs
+})]
+
+# Read and bind the filtered files into one dataframe
+data_pre2002 <- bind_rows(lapply(filtered_files, fread))
+
+# Filter data based on conditions
+data_pre2002 <- data_pre2002 %>%
+  filter(RF_pre_veg == 7) %>%
+  filter(transitioned == 1) %>%
+  filter(rdnbr_class == 3) %>%
+  filter(tree_planting == 0) %>%
+  filter(reburn_20yrs == 0)
+
+# Calculate additional columns
+data_pre2002$years_since_fire <- data_pre2002$fire_year - data_pre2002$previous_fire_year
+data_pre2002$returned[!is.na(data_pre2002$yrs_to_return) & data_pre2002$yrs_to_return > 20] <- 0
+
+# Replace NA values in years_since_fire with 100
+data_pre2002 <- data_pre2002 %>%
+  mutate(years_since_fire = ifelse(is.na(years_since_fire), 100, years_since_fire))
+
+
+# Group by fire_year and predicted_class, then summarize the counts
+class_counts_predicted <- new_data_with_predictions %>%
+  group_by(fire_year, predicted_class) %>%
+  summarise(count = n(), .groups = "drop")
+
+class_counts_predicted$type <- 'predicted'
+
+
+class_counts_measured <- data_pre2002 %>%
+  group_by(fire_year,returned)%>%
+  summarise(count = n(), .groups = 'drop')
+
+class_counts_measured$type <- 'measured'
+
+class_counts_predicted <- setNames(class_counts_predicted, c("fire_year", "returned","count","type"))
+class_counts_measured <- setNames(class_counts_measured, c("fire_year", "returned","count","type"))
+class_counts_predicted$returned <- as.numeric(class_counts_predicted$returned)
+
+class_counts <- rbind(class_counts_measured,class_counts_predicted)
+
+class_counts$area <- class_counts$count * 0.09
+
+
+bars_recovered <- ggplot(class_counts, aes(x = fire_year, y = area, fill = factor(returned), alpha = type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("darkgrey", "darkgreen")) +  # Manually set the colors
+  scale_alpha_manual(values = c(1, 0.5)) +       # Full opacity for one, semi-transparent for another
+  labs(title = "",
+       x = "Fire year",
+       y = "Area (ha)",
+       fill = "Predicted class",
+       alpha = "Type") +
+  scale_y_continuous(labels = comma) +   # ← Add this line for thousand separators
+  xlim(c(1987,2019))+
+  ylim(c(0,25000))+
+  theme_pubr()
+
+
+
+
+# With cumulative area curves
+
+# Step 1: Compute cumulative sums by returned class and fire year
+cumulative_area <- class_counts %>%
+  group_by(returned, fire_year) %>%
+  summarise(area = sum(area), .groups = "drop") %>%
+  arrange(returned, fire_year) %>%
+  group_by(returned) %>%
+  mutate(cum_area = cumsum(area))
+
+# Step 2: Create the original bar chart
+bars_recovered <- ggplot(class_counts, aes(x = fire_year, y = area, fill = factor(returned), alpha = type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  
+  # Step 3: Add cumulative line
+  geom_line(data = cumulative_area, 
+            aes(x = fire_year, y = cum_area, color = factor(returned), group = returned),
+            size = 1.2, inherit.aes = FALSE) +
+  
+  # Aesthetic settings
+  scale_fill_manual(values = c("0" = "darkgrey", "1" = "darkgreen"),
+                    labels = c("Not Recovered", "Recovered"),
+                    name = "Returned") +
+  scale_color_manual(values = c("0" = "darkgrey", "1" = "darkgreen"), guide = "none") +
+  scale_alpha_manual(values = c("measured" = 1, "predicted" = 0.5)) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = "Fire Year",
+    y = "Area (ha)",
+    title = "",
+    alpha = "Type",
+    fill = "Returned"
+  ) +
+  theme_bw()
+
+
+bars_recovered <- ggplot(class_counts, aes(x = fire_year, y = area, fill = factor(returned), alpha = type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+
+  # Add cumulative line
+  geom_line(data = cumulative_area, 
+            aes(x = fire_year, y = cum_area, color = factor(returned), group = returned),
+            size = 1.2, inherit.aes = FALSE) +
+
+  # Manual color and alpha settings
+  scale_fill_manual(values = c("0" = "darkgrey", "1" = "darkgreen"),
+                    labels = c("Not Recovered", "Recovered"),
+                    name = "Returned") +
+  scale_color_manual(values = c("0" = "darkgrey", "1" = "darkgreen"), guide = "none") +
+  scale_alpha_manual(values = c("measured" = 1, "predicted" = 0.5)) +
+
+  # Scale y-axis by 1000 and remove scientific notation
+  scale_y_continuous(
+    labels = function(x) format(x / 1000, big.mark = ","),
+    name = "Area (x1000 ha)"
+  ) +
+
+  # Axis titles and theme customization
+  labs(
+    x = "Fire year",
+    title = "",
+    alpha = "Type",
+    fill = "Returned"
+  ) +
+  theme_bw() +  # start with minimal theme to remove gridlines
+  theme(
+    panel.grid = element_blank(),  # remove all gridlines
+    axis.title = element_text(size = 20),
+    axis.text = element_text(size = 16, face = "bold"),
+    legend.position = "none"  # 👈 removes the legend
+  )
+
+# Step 4: Show the plot
+print(bars_recovered)
+
+
+
+  class_counts_prop <- class_counts %>%
+    group_by(fire_year)%>%
+    summarise(total_area = sum(area))
+
+  merged_data <- class_counts %>%
+    inner_join(class_counts_prop, by = "fire_year")
+
+  merged_data_0 <- merged_data %>%
+    filter(returned==0)
+
+  merged_data_0$prop <- merged_data_0$area/merged_data_0$total_area
+
+
+  ggplot(merged_data_0, aes(x = fire_year, y = prop)) +
+    geom_point(size = 3, alpha = 0.8, color = "black") +  # Scatter plot
+    geom_smooth(method = "lm", color = "black", se = TRUE) +  # Linear trendline
+    labs(
+      title = "Prop. severely burned conifer not recov/ pred. to recov w/in 20 yrs",
+      x = "Fire year",
+      y = "Proportion not recovered"
+    ) +
+    theme_classic() +  # Clean theme
+    theme(
+      text = element_text(size = 12),
+      axis.text.x = element_text(hjust = 1)  # Rotate x-axis labels if needed
+    )
+
+
+  # Fit the linear model
+  linear_model <- lm(prop ~ fire_year, data = merged_data_0)
+
+  # Summary of the model
+  summary(linear_model)
+
+
+  
+# Plot absolute area not recovered/ predicted to not recover over time
+  
+  class_counts_noreturn <- class_counts %>%
+    filter(returned == 0)
+  
+    ggplot(class_counts_noreturn, aes(x = fire_year, y = count)) +
+    geom_point(size = 3, alpha = 0.8, color = "black") +  # Scatter plot
+    geom_smooth(method = "lm", color = "black", se = TRUE) +  # Linear trendline
+    labs(
+      title = "",
+      x = "Fire year",
+      y = "Proportion not recovered"
+    ) +
+      ylim(c(0, 700000))+
+    theme_classic() +  # Clean theme
+    theme(
+      text = element_text(size = 12),
+      axis.text.x = element_text(hjust = 1)  # Rotate x-axis labels if needed
+    )
+  
+  # Fit the linear model
+  linear_model <- lm(count ~ fire_year, data = class_counts_noreturn)
+
+  # Summary of the model
+  summary(linear_model)
+  
+
+class_counts_noreturn <- class_counts %>%
+  filter(returned == 0)
+
+ggplot(class_counts_noreturn, aes(x = fire_year, y = count)) +
+  geom_point(size = 3, alpha = 0.8, color = "black") +  # Scatter plot
+  geom_smooth(method = "gam", formula = y ~ s(x), color = "black", se = TRUE) +  # ← GAM here
+  labs(
+    title = "",
+    x = "Fire year",
+    y = "Area not recovered"
+  ) +
+  ylim(c(0, 150000)) +
+  theme_classic() +
+  theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(hjust = 1)
+  )
+
+gam_model <- gam(count ~ s(fire_year), data = class_counts_noreturn)
+summary(gam_model)
+
+
+
+#### Decadal sums of area at risk of transitioning:
+
+class_counts_noreturn_dec1 <- class_counts_noreturn %>%
+  filter(fire_year >= 1985, fire_year <= 1994)
+
+class_counts_noreturn_dec2 <- class_counts_noreturn %>%
+  filter(fire_year >= 1995, fire_year <= 2004)
+
+class_counts_noreturn_dec3 <- class_counts_noreturn %>%
+  filter(fire_year >= 2005, fire_year <= 2014)
+
+class_counts_noreturn_dec4 <- class_counts_noreturn %>%
+  filter(fire_year >= 2015, fire_year <= 2024)
+
+sum_noreturn_dec1 <- sum(class_counts_noreturn_dec1$area)
+#7,108.11 old model: 11,025.63
+sum_noreturn_dec2 <- sum(class_counts_noreturn_dec2$area)
+#3,898.8 old model: 7,710.48
+sum_noreturn_dec3 <- sum(class_counts_noreturn_dec3$area)
+#46,692.9 old model: 36,284.13
+sum_noreturn_dec4 <- sum(class_counts_noreturn_dec4$area)
+#236,256.9 old model: 226,533.96
+
+
+
+# Pivot to a wider format
+
+# Recode returned column for clearer labels
+class_counts_wide <- class_counts %>%
+  mutate(returned = ifelse(returned == 1, "recovered", "transitioned")) %>%
+  dplyr::select(fire_year, type, returned, area) %>%
+  pivot_wider(
+    names_from = returned,
+    values_from = area
+  )
+
+# View the resulting wide-format table
+print(class_counts_wide)
+
+#fwrite(class_counts_wide, "C:/Users/jscho/Documents/Megafires-1985-2023-Data/counts_area_transitioned_annual_predicted.csv")
+
+
+
+trans <- sum(class_counts_wide$transitioned, na.rm = TRUE)
+rec <- sum(class_counts_wide$recovered, na.rm = TRUE)
+total <- trans+rec
+
+trans/total
+```
+
+
+#Figure 2 Cumulative core area and example map KNP
+
+```{r figure-6-recovery-predictions-including-excluding-reburns-and-plantings-chunk2}
+# --------------------
+# Load and Prepare Data
+# --------------------
+
+# Load RdNBR-classified raster (categorical burn severity: 1=low, 2=moderate, 3=severe)
+r_path <- "C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/RdNBR_classified/718.tif"
+r <- raster(r_path)
+
+# Convert raster to terra object for manipulation and plotting
+rdnbr_rast <- rast(r_path)
+rdnbr_df <- as.data.frame(rdnbr_rast, xy = TRUE)
+names(rdnbr_df)[3] <- "rdnbr_class"
+rdnbr_df$rdnbr_class <- as.factor(rdnbr_df$rdnbr_class)
+
+# Load fire perimeter shapefile
+fire_outline <- st_read("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Data/Megafire_paper/mega_indiv_shp/2021/Mega_718.shp")
+
+# Define custom RdNBR colors and labels
+rdnbr_colors <- c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154")
+rdnbr_labels <- c("1" = "low", "2" = "moderate", "3" = "severe")
+
+# -----------------------------
+# Identify Core and Non-Core Areas (Class 3 only)
+# -----------------------------
+
+# Define core edge depth and neighborhood window
+edge_depth <- 5
+window_size <- edge_depth * 2 + 1
+window <- matrix(1, nrow = window_size, ncol = window_size)
+max_neighbors <- sum(window)
+
+# Binary masks
+r_class3 <- r == 3                 # Mask of class 3 (severe)
+r_non_na <- !is.na(r)              # Mask of valid cells
+
+# Focal operations to count neighbors
+class3_counts <- focal(r_class3, w = window, fun = sum, na.rm = FALSE, pad = TRUE)
+valid_counts  <- focal(r_non_na, w = window, fun = sum, na.rm = FALSE, pad = TRUE)
+
+# Core mask: class 3 pixels with full valid neighborhood of class 3\score_mask <- (class3_counts == max_neighbors) & (valid_counts == max_neighbors)
+
+# Step 5: Core pixels = where class3_counts == max_neighbors AND valid_counts == max_neighbors
+core_mask <- (class3_counts == max_neighbors) & (valid_counts == max_neighbors)
+
+# Raster of core class 3 pixels
+core_class3_raster <- mask(r, core_mask, maskvalue = FALSE)
+core_binary <- calc(core_class3_raster, fun = function(x) ifelse(x == 3, 1, NA))
+
+# Identify non-core class 3 pixels
+non_core_class3 <- mask(r_class3, core_binary, maskvalue = 1)
+
+# Combine core and non-core class 3 into one raster:
+# 2 = core, 1 = non-core, NA = everything else
+combined <- overlay(core_binary, non_core_class3, fun = function(core, noncore) {
+  ifelse(!is.na(core) & core == 1, 2,
+         ifelse(!is.na(noncore) & noncore == 1, 1, NA))
+})
+
+# Convert combined raster to dataframe for ggplot
+core_df <- as.data.frame(combined, xy = TRUE)
+colnames(core_df)[3] <- "burn_type"
+core_df <- core_df %>%
+  filter(!is.na(burn_type)) %>%
+  mutate(burn_type = factor(burn_type, levels = c(1, 2), labels = c("Non-core", "Core")))
+
+# --------------------
+# Plotting
+# --------------------
+
+# (A) Map of RdNBR classes
+map_plot_updated <- ggplot() +
+  geom_tile(data = rdnbr_df, aes(x = x, y = y, fill = rdnbr_class)) +
+  scale_fill_manual(values = rdnbr_colors, labels = rdnbr_labels, name = "RdNBR class") +
+  geom_sf(data = fire_outline, fill = NA, color = "grey", size = 0.7) +
+  coord_sf() +
+  annotation_scale(location = "bl", width_hint = 0.5, text_cex = 0.8) +
+  annotation_north_arrow(location = "bl", which_north = "true", pad_x = unit(0.3, "in"), pad_y = unit(0.5, "in"),
+                         style = north_arrow_fancy_orienteering) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    legend.position = "none"
+  )
+
+# (B) Core vs. Non-core Map
+core_plot <- ggplot(core_df, aes(x = x, y = y, fill = burn_type)) +
+  geom_tile() +
+  scale_fill_manual(values = c("Non-core" = "#440154", "Core" = "orange")) +
+  geom_sf(data = fire_outline, fill = NA, color = "grey", size = 0.7, inherit.aes = FALSE) +  # ← FIXED HERE
+  coord_sf() +
+  annotation_scale(location = "bl", width_hint = 0.5, text_cex = 0.8) +
+  annotation_north_arrow(location = "bl", which_north = "true", 
+                         pad_x = unit(0.3, "in"), pad_y = unit(0.5, "in"),
+                         style = north_arrow_fancy_orienteering) +
+  labs(x = "Longitude", y = "Latitude", fill = "Burn Type") +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 10),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    legend.position = "none"
+  )
+
+# --------------------
+# Combine and Stack Maps with Bar Plot
+# --------------------
+
+# Combine maps (B and C)
+maps_combined <- plot_grid(
+  map_plot_updated,
+  core_plot,
+  labels = c("b", "c"),
+  ncol = 2,
+  align = "hv"
+)
+
+# Align cumulative bar plot (A) and stack all
+cum_1_aligned <- cum_1 +
+  theme(plot.margin = margin(t = 5, r = 5, b = 5, l = 40))  # aligns left axis
+
+final_layout <- plot_grid(
+  cum_1_aligned,
+  maps_combined,
+  ncol = 1,
+  rel_heights = c(1, 1.5),
+  labels = c("a", "")
+)
+
+# Display full figure
+print(final_layout)
+```
+
+# Fig 4c Including plantings/ reburns
+
+
+```{r fig-4c-including-plantings-reburns-chunk1}
+# Load libraries
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+# Fire IDs and file paths
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+csv_dir <- paste0(here(),"/Data/raster_df_mega_repeated_planting")
+csv_files <- list.files(csv_dir, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
+
+# Store all pixel data
+pixel_data_list <- list()
+
+for (file in csv_files) {
+  fire_id <- as.integer(gsub("\\.csv$", "", basename(file)))
+  dt_full <- fread(file)  # Read full data
+
+  # Step 1: Get patch sizes from full dataset
+  patch_sizes <- dt_full[, .(patch_n_total = .N, rdnbr_class = first(rdnbr_class)), by = id]
+
+  # Step 2: Filter to relevant pixels
+  dt <- dt_full[RF_pre_veg == 7 & transitioned == 1]
+  if (nrow(dt) == 0) next
+
+  # Step 3: Flag recovery within 20 years
+  dt[, returned_20yrs := as.integer(returned == 1 & yrs_to_return < 21)]
+  dt[, abs_not_recovered := as.integer(returned == 0 | yrs_to_return >= 21 | is.na(returned))]
+
+  # Step 4: Add pixel-level status
+  dt[, pixel_status := fifelse(reburn_20yrs == 1, "reburned",
+                        fifelse(tree_planting == 1, "planted", "none"))]
+
+  # Step 5: Merge patch size data
+  dt <- merge(dt, patch_sizes, by = "id", all.x = TRUE)
+
+  # Step 6: Fix rdnbr_class column if renamed
+  if ("rdnbr_class.x" %in% names(dt)) {
+    dt[, rdnbr_class := rdnbr_class.x]
+    dt[, rdnbr_class.x := NULL]
+  }
+  if ("rdnbr_class.y" %in% names(dt)) {
+    dt[, rdnbr_class.y := NULL]
+  }
+
+  # Step 7: Classify patch size
+  dt[, patch_size_class := cut(
+    patch_n_total,
+    breaks = c(1, 100, 1000, 10000, 1500000),
+    labels = c("small", "medium", "large", "very large"),
+    include.lowest = TRUE
+  )]
+
+  # Add fire ID and store
+  dt[, fire_id := fire_id]
+  pixel_data_list[[length(pixel_data_list) + 1]] <- dt
+}
+
+# Combine all data
+all_pixels <- rbindlist(pixel_data_list, fill = TRUE)
+
+# Now safe to filter
+all_pixels <- all_pixels[!is.na(patch_size_class) & !is.na(rdnbr_class) & rdnbr_class > 0]
+
+# Filter to unplanted and unreburned only
+plot_data <- all_pixels[pixel_status == "none"]
+
+# Summarize area not recovered within 20 years
+marginal_data <- plot_data %>%
+  group_by(patch_size_class, rdnbr_class) %>%
+  summarise(
+    total_abs_notRecov = sum(abs_not_recovered, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total_abs_notRecov_ha = total_abs_notRecov * 0.09,
+    total_abs_notRecov_thousand_ha = total_abs_notRecov_ha / 1000
+  )
+
+# Plot
+plot_none <- ggplot(marginal_data, aes(x = patch_size_class, y = total_abs_notRecov_thousand_ha, fill = factor(rdnbr_class))) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.5) +
+  scale_fill_manual(
+    values = c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154"),
+    name = "Burn severity",
+    labels = c("1" = "low", "2" = "moderate", "3" = "high")
+  ) +
+  labs(
+    x = "Patch size class",
+    y = "Area not recovered w/in 20 yrs (1,000 ha)",
+    title = ""
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    legend.position = "none"
+  )
+
+# Show plot
+print(plot_none)
+plot_3 <- plot_none
+
+```
+
+```{r fig-4c-including-plantings-reburns-chunk2}
+# Load libraries
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+# Define fire IDs and file paths
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+csv_dir <- "C:/Users/jscho/Documents/Megafires-1985-2023-Data/raster_df_mega_repeated_planting"
+csv_files <- list.files(csv_dir, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
+
+# Store all pixel data
+pixel_data_list <- list()
+
+for (file in csv_files) {
+  fire_id <- as.integer(gsub("\\.csv$", "", basename(file)))
+  dt_full <- fread(file)  # Read full data
+
+  # Step 1: Get patch sizes based on full dataset
+  patch_sizes <- dt_full[, .(patch_n_total = .N, rdnbr_class = first(rdnbr_class)), by = id]
+
+  # Step 2: Filter to relevant pixels
+  dt <- dt_full[RF_pre_veg == 7 & transitioned == 1]
+
+  if (nrow(dt) == 0) next
+
+  # Step 3: Flag recovery within 20 years
+  dt[, returned_20yrs := as.integer(returned == 1 & yrs_to_return < 21)]
+  dt[, abs_not_recovered := as.integer(returned == 0 | yrs_to_return >= 21 | is.na(returned))]
+
+  # Step 4: Add pixel-level status
+  dt[, pixel_status := fifelse(reburn_20yrs == 1, "reburned",
+                        fifelse(tree_planting == 1, "planted", "none"))]
+
+  # Step 5: Merge patch size data
+  dt <- merge(dt, patch_sizes, by = "id", all.x = TRUE)
+
+  # Step 6: Classify patch size
+  dt[, patch_size_class := cut(
+    patch_n_total,
+    breaks = c(1, 100, 1000, 10000, 1500000),
+    labels = c("small", "medium", "large", "very large"),
+    include.lowest = TRUE
+  )]
+
+  # Save fire ID
+  dt[, fire_id := fire_id]
+
+  pixel_data_list[[length(pixel_data_list) + 1]] <- dt
+}
+
+# Combine all fires' pixel data
+all_pixels <- rbindlist(pixel_data_list, fill = TRUE)
+
+# Keep only valid patch sizes and burn severity
+all_pixels <- all_pixels[!is.na(patch_size_class) & !is.na(rdnbr_class) & rdnbr_class > 0]
+
+# Filter to unplanted and unreburned only
+plot_data <- all_pixels[pixel_status == "none"]
+
+# Summarize area not recovered within 20 years
+marginal_data <- plot_data %>%
+  group_by(patch_size_class, rdnbr_class) %>%
+  summarise(
+    total_abs_notRecov = sum(abs_not_recovered, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total_abs_notRecov_ha = total_abs_notRecov * 0.09,
+    total_abs_notRecov_thousand_ha = total_abs_notRecov_ha / 1000
+  )
+
+# Plot
+plot_none <- ggplot(marginal_data, aes(x = patch_size_class, y = total_abs_notRecov_thousand_ha, fill = factor(rdnbr_class))) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
+  scale_fill_manual(
+    values = c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154"),
+    name = "Burn severity",
+    labels = c("1" = "low", "2" = "moderate", "3" = "high")
+  ) +
+  labs(
+    x = "Patch size class",
+    y = "Area not recovered w/in 20 yrs (1,000 ha)",
+    title = ""
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    legend.position = 'none'
+  )
+
+# Show plot
+print(plot_none)
+
+plot_3 <- plot_none
+
+```
+
+# Figure 4c- Transition box and bar
+
+```{r figure-4c-transition-box-and-bar-chunk1}
+# For 20 year post-fire series: patch size vs. perc. recov after 20 years
+
+patch_metrics_mega <- patch_metrics_mega %>%
+  mutate(n_bins = cut(n,
+                      breaks = c(1, 100, 1000,10000,1500000),
+                      labels = c("small","medium","large","very_large"),
+                      include.lowest = TRUE))
+
+# Select patches with at least 20 years post-fire history
+filtered_patch_metrics <- patch_metrics_mega %>%
+  filter(OBJECTID %in% megafire_IDs)
+
+filtered_patch_metrics$prop_con_trans <- 1- (filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7)
+filtered_patch_metrics$prop_orig_con_1 <- filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_3 <- filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_5 <- filtered_patch_metrics$count_RF_post5_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_10 <- filtered_patch_metrics$count_RF_post10_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_15 <- filtered_patch_metrics$count_RF_post15_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_20 <- filtered_patch_metrics$count_RF_post20_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$abs_con_notRecov_20yrs <- filtered_patch_metrics$count_RF_pre_veg_7 - filtered_patch_metrics$count_RF_post20_veg_7
+
+
+filtered_patch_metrics_HS <- filtered_patch_metrics %>%
+  filter(rdnbr_class==3)
+
+filtered_patch_metrics_5con <- filtered_patch_metrics %>%
+  filter(count_RF_pre_veg_7 > 4)
+
+filtered_patch_metrics_HS_5con <- filtered_patch_metrics_HS %>%
+  filter(count_RF_pre_veg_7 > 4)
+
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  filter(rdnbr_class >0)
+
+# Combine n_bins and rdnbr_class into a single factor for the x-axis
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = interaction(n_bins, rdnbr_class, sep = "_"))
+
+
+# Add spacing to the groups by adding empty levels
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = as.factor(n_bins_rdnbr)) %>%
+  arrange(n_bins_rdnbr, rdnbr_class) %>%
+  mutate(
+    n_bins_rdnbr = factor(n_bins_rdnbr, levels = c(levels(n_bins_rdnbr), "")),  # Add an empty level for gaps
+    rdnbr_class = as.factor(rdnbr_class)  # Ensure rdnbr_class is a factor
+  )
+
+# Summarize data for the marginal bar plot
+marginal_data <- filtered_patch_metrics_5con %>%
+  group_by(n_bins_rdnbr) %>%
+  summarize(total_abs_con_notRecov = sum(abs_con_notRecov_20yrs, na.rm = TRUE))
+
+marginal_data$total_abs_con_notRecov_ha <- marginal_data$total_abs_con_notRecov * 0.09
+
+# Inspect unique values in n_bins_rdnbr
+unique_bins <- unique(filtered_patch_metrics_5con$n_bins_rdnbr)
+
+# Reorder levels dynamically based on observed values
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = factor(n_bins_rdnbr, levels = c("small_1","small_2","small_3", "medium_1","medium_2","medium_3", "large_1","large_2","large_3","very_large_1","very_large_2","very_large_3")))  # Replace with actual levels if different
+
+# Update marginal_data with correct levels
+marginal_data <- filtered_patch_metrics_5con %>%
+  group_by(n_bins_rdnbr) %>%
+  summarize(total_abs_con_notRecov = sum(abs_con_notRecov_20yrs, na.rm = TRUE)) %>%
+  mutate(total_abs_con_notRecov_ha = total_abs_con_notRecov * 0.09)
+
+# Recreate boxplot with adjusted order
+boxplot <- ggplot(filtered_patch_metrics_5con, aes(x = n_bins_rdnbr, y = prop_orig_con_20, fill = rdnbr_class)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +  # Slightly transparent boxplot
+  geom_jitter(aes(color = rdnbr_class), width = 0.2, alpha = 0.5, size = 1) +  # Scatter points with jitter
+  stat_summary(
+    fun = mean,  # Calculate the mean
+    geom = "point",  # Add points
+    shape = 18,  # Use a diamond shape for the mean
+    size = 3,  # Adjust size of the mean point
+    color = "red"  # Set color to red
+  ) +
+  labs(
+    x = "n_bins and RDNBR Class",
+    y = "Proportion of Original Conifer (20 Years)"
+  ) +
+  ylim(c(0, 1)) +
+  scale_x_discrete(drop = FALSE) +  # Keep empty levels for gaps
+  scale_fill_manual(values = c("#F6BE00", "#21918c", "#440154", "#F94144")) +  # Custom box colors
+  scale_color_manual(values = c("lightgrey", "lightgrey", "lightgrey", "lightgrey")) +  # Custom scatter colors
+  theme_classic() +
+  theme(
+    legend.position = "none",  # Remove legend
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+marginal_data <- marginal_data %>%
+  mutate(
+    severity = factor(
+      stringr::str_extract(n_bins_rdnbr, "\\d$"),  # extract last digit
+      levels = c("1", "2", "3")
+    )
+  )
+
+barplot <- ggplot(marginal_data, aes(x = n_bins_rdnbr, y = -total_abs_con_notRecov_ha, fill = severity)) +
+  geom_bar(stat = "identity", alpha = 0.5) +
+  scale_fill_manual(values = c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154")) +
+  labs(
+    x = "",
+    y = "Total Abs Con Not Recovered (20 Years, ha)"
+  ) +
+  scale_x_discrete(drop = FALSE) +  # Keep empty levels for gaps
+  theme_classic() +
+  theme(
+    axis.text.x = element_blank(),       # Remove overlapping labels
+    axis.title.x = element_blank(),      # Remove x-axis title
+    axis.text.y = element_text(angle = 45, hjust = 1),
+    legend.position = 'none'
+  )
+
+print(barplot)
+
+
+
+# Combine the plots
+combined_plot <- plot_grid(
+  boxplot, barplot,
+  ncol = 1,
+  rel_heights = c(3, 1)  # Adjust the relative heights
+)
+
+combined_plot <- plot_grid(
+  boxplot, barplot,
+  ncol = 1,
+  rel_heights = c(3, 1),
+  align = "v",       # vertically align the plots
+  axis = "lr"        # align left and right axes
+)
+
+# Add title to the combined plot
+final_plot <- plot_grid(combined_plot, ncol = 1, rel_heights = c(0.1, 1))
+
+
+
+# Print the combined plot
+print(final_plot)
+
+
+
+
+
+
+
+# ANOVA
+
+# Run one-way ANOVA- This tests if mean prop_orig_con_20 differs by group (i.e., small_1, medium_3, etc.).
+anova_result <- aov(prop_orig_con_20 ~ n_bins_rdnbr, data = filtered_patch_metrics_5con)
+summary(anova_result)
+
+
+# Two-way ANOVA with interaction- This will show Main effects of patch size (n_bins), Main effects of burn severity (rdnbr_class), Interaction effects between the two
+
+anova_interaction <- aov(prop_orig_con_20 ~ n_bins * rdnbr_class, data = filtered_patch_metrics_5con)
+summary(anova_interaction)
+
+# Normality of residuals
+plot(anova_result, which = 2)  # Q-Q plot
+
+# Homogeneity of variance
+plot(anova_result, which = 1)  # Residuals vs fitted
+
+# Levene's Test (optional, from car package)
+library(car)
+leveneTest(prop_orig_con_20 ~ n_bins_rdnbr, data = filtered_patch_metrics_5con)
+
+TukeyHSD(anova_result)
+
+TukeyHSD(anova_interaction)
+
+
+
+
+
+
+
+
+# Only the barplot, right way up
+
+marginal_data$total_abs_con_notRecov_thousand_ha <- marginal_data$total_abs_con_notRecov_ha/ 1000
+
+plot_3 <- ggplot(marginal_data, aes(x = n_bins_rdnbr, y = total_abs_con_notRecov_thousand_ha, fill = severity)) +
+  geom_bar(stat = "identity", alpha = 0.3) +
+  scale_fill_manual(values = c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154")) +
+  labs(
+    x = "",
+    y = "Area not recovered w/in 20 yrs (1,000 x ha)"
+  ) +
+  scale_y_continuous(labels = scales::comma_format())+
+  scale_x_discrete(drop = FALSE) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_blank(),
+    legend.position = 'none',
+    axis.title = element_text( size = 14), #face = "bold",
+    axis.text = element_text( size = 12),
+  )
+
+print(plot_3)
+```
+
+# New figure 4
+
+```{r new-figure-4-chunk1}
+library(cowplot)
+
+# Combine plot_1 and plot_2 in top row
+top_row <- plot_grid(plot_1, plot_2, labels = c("a", "b"), label_size = 14)
+
+# Combine top row with plot_3 below
+final_plot <- plot_grid(top_row, plot_3, ncol = 1, labels = c("", "c"), label_size = 14, rel_heights = c(1, 1))
+
+
+library(cowplot)
+# Combine plot_1 and plot_2, aligned horizontally
+top_row <- plot_grid(
+  plot_1, plot_2,
+  labels = c("A", "B"),
+  label_size = 14,
+  align = "h",        # align horizontally
+  axis = "b"          # align bottom axis lines
+)
+
+# Add plot_3 below
+final_plot <- plot_grid(
+  top_row, plot_3,
+  ncol = 1,
+  labels = c("", "C"),
+  label_size = 14,
+  rel_heights = c(1, 1)
+)
+
+
+```
+
+# Mapping individual patches
+
+
+```{r mapping-individual-patches-chunk1}
+# Find patches in fires before 2002 with rdnbr_class == 3, and more than 500 pixels RF_pre_veg == 7
+
+library(data.table)
+library(dplyr)
+
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+# List to store patch summaries
+patch_summary_list <- list()
+
+for (fire_id in fire_IDs) {
+  
+  # Load the CSV for the fire
+  file_path <- paste0(here(),"/Data/raster_df_mega/", fire_id, ".csv")
+  if (!file.exists(file_path)) {
+    warning(paste("File missing for fire", fire_id))
+    next
+  }
+  
+  df_fire <- fread(file_path)
+  
+  # Ensure needed columns exist
+  if (!all(c("id", "rdnbr_class", "RF_pre_veg") %in% names(df_fire))) {
+    warning(paste("Required columns missing in fire", fire_id))
+    next
+  }
+  
+  # Group by patch ID and summarise
+  id_freq_rdnbr <- df_fire %>%
+    group_by(id) %>%
+    summarise(
+      fire_id = fire_id,
+      frequency = n(),
+      rdnbr_class = first(rdnbr_class),
+      pre_veg_7_count = sum(RF_pre_veg == 7, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Filter to patches meeting criteria:
+  selected_patches <- id_freq_rdnbr %>%
+    filter(rdnbr_class == 3 & (frequency > 1000 | pre_veg_7_count > 500))
+  
+  # Store in list
+  patch_summary_list[[as.character(fire_id)]] <- selected_patches
+}
+
+# Combine all into one dataframe
+patch_summary_df <- bind_rows(patch_summary_list)
+
+# View or export
+print(patch_summary_df)
+# write.csv(patch_summary_df, "patch_summary_selected.csv", row.names = FALSE)
+
+```
+
+```{r mapping-individual-patches-chunk2}
+# Map the just found patches
+
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(fs)
+
+# Set path to fire CSVs
+data_path <- paste0(here(),"/Data/raster_df_mega")
+
+# Color palette
+veg_colors <- c('1' = '#956733', '2' = '#a7b5a5', '3' = '#0940ca', '4' = '#d8bf58', '5' = '#6dcd2b', '6' = '#ffacc9', '7' = '#0e4f12', '8' = '#7b8d6a', '9' = '#e97451')
+
+# Loop over each patch
+for (i in 1:nrow(patch_summary_df)) {
+  
+  fire_id <- patch_summary_df$fire_id[i]
+  patch_id <- patch_summary_df$id[i]
+  
+  # Load the fire raster dataframe
+  df_file <- file.path(data_path, paste0(fire_id, ".csv"))
+  if (!file_exists(df_file)) next
+  
+  df_fire <- fread(df_file)
+  
+  # Subset to the patch
+  df_patch <- df_fire %>% filter(id == patch_id)
+  
+  # Extract all RF_postX_veg and RF_pre_veg columns
+  veg_df <- df_patch %>%
+    select(starts_with("RF_post"), RF_pre_veg)
+  
+  # Pivot to long format
+  veg_long <- veg_df %>%
+    pivot_longer(cols = everything(), names_to = "year_label", values_to = "veg_class") %>%
+    mutate(
+      rel_year = ifelse(year_label == "RF_pre_veg", 0,
+                        as.integer(gsub("RF_post(\\d+)_veg", "\\1", year_label))),
+      veg_class = as.character(veg_class)
+    ) %>%
+    group_by(rel_year, veg_class) %>%
+    summarise(count = n(), .groups = "drop")
+  
+veg_long <- veg_long %>%
+  mutate(
+    veg_class = factor(veg_class, levels = c(as.character(sort(unique(veg_class[veg_class != "7"]))), "7"))
+
+  ) %>%
+  arrange(rel_year, veg_class)  # 👈 stacking order now guaranteed
+
+used_levels <- levels(veg_long$veg_class)
+veg_colors_ordered <- veg_colors[used_levels]
+
+p <- ggplot(veg_long, aes(x = rel_year, y = count, fill = veg_class)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.7) +
+  scale_fill_manual(values = veg_colors_ordered, drop = FALSE, na.translate = FALSE) +
+  labs(
+    title = paste("Vegetation Change - Fire", fire_id, "Patch", patch_id),
+    x = "Years Since Fire (0 = Pre-fire)",
+    y = "Pixel Count",
+    fill = "Vegetation Class"
+  ) +
+  theme_classic(base_size = 12)
+
+}
+  
+  # Save
+ # out_file <- paste0("C:/Users/jscho/Documents/Megafires-1985-2023-Data/patch_veg/veg_trajectory_fire", fire_id, "_patch", patch_id, ".png")
+#  ggsave(out_file, plot = p, width = 8, height = 5, dpi = 300)
+#}
+
+```
+
+```{r mapping-individual-patches-chunk3}
+# Actually maps
+
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(fs)
+
+# Set paths and color map
+data_path <- paste0(here(),"/Data/raster_df_mega")
+
+veg_colors <- c('1' = '#956733', '2' = '#a7b5a5', '3' = '#0940ca', '4' = '#d8bf58', '5' = '#6dcd2b', '6' = '#ffacc9', '7' = '#0e4f12', '8' = '#7b8d6a', '9' = '#e97451')
+
+# Loop through each patch
+for (i in 1:nrow(patch_summary_df)) {
+  
+  fire_id <- patch_summary_df$fire_id[i]
+  patch_id <- patch_summary_df$id[i]
+  
+  # Load the fire CSV
+  df_file <- file.path(data_path, paste0(fire_id, ".csv"))
+  if (!file_exists(df_file)) next
+  
+  df_fire <- fread(df_file)
+  
+  # Subset to patch
+  df_patch <- df_fire %>% filter(id == patch_id)
+  
+  # Pivot all RF_postX_veg and RF_pre_veg to long format
+  veg_spatial <- df_patch %>%
+    select(x, y, starts_with("RF_post"), RF_pre_veg) %>%
+    pivot_longer(cols = starts_with("RF_"), names_to = "year_label", values_to = "veg_class") %>%
+    mutate(
+      rel_year = ifelse(year_label == "RF_pre_veg", 0,
+                        as.integer(gsub("RF_post(\\d+)_veg", "\\1", year_label))),
+      veg_class = as.character(veg_class)
+    ) %>%
+    filter(!is.na(veg_class))
+  
+  # Plot faceted tile map
+  p <- ggplot(veg_spatial, aes(x = x, y = y, fill = veg_class)) +
+    geom_tile() +
+    scale_fill_manual(values = veg_colors, na.translate = FALSE) +
+    coord_equal() +
+    facet_wrap(~ rel_year) +
+    labs(
+      title = paste("Vegetation Structure Over Time\nFire", fire_id, "Patch", patch_id),
+      fill = "Veg Class"
+    ) +
+    theme_bw() +
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid = element_blank(),
+      strip.text = element_text(size = 10, face = "bold")
+    )
+  
+  # Save map
+  out_file <- paste0(here(),"/Data/patch_veg_map/veg_patch_map_fire", fire_id, "_patch", patch_id, ".png")
+  ggsave(out_file, plot = p, width = 10, height = 6, dpi = 300)
+}
+
+```
+
+# Specific patch recovery
+
+```{r specific-patch-recovery-chunk1}
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(cowplot)
+library(fs)
+library(grid)
+
+# Fire/Patch selection
+# selected_patches <- data.frame(
+#   fire_id = c(7514, 7242, 7514),
+#   patch_id = c(3512, 3158, 3902)
+# )
+
+selected_patches <- data.frame(
+  fire_id = c(10273, 10273, 10498),
+  patch_id = c(3647, 3692, 3279)
+)
+
+# Just before the join
+selected_patches$fire_id <- as.integer(selected_patches$fire_id)
+fire_metrics_mega$OBJECTID <- as.integer(fire_metrics_mega$OBJECTID)
+
+selected_patches <- selected_patches %>%
+  left_join(fire_metrics_mega, by = c("fire_id" = "OBJECTID")) %>%
+  mutate(FIRE_NAME = ifelse(fire_id == 10273, "CLARK", FIRE_NAME)) %>%
+  mutate(title = paste0(FIRE_NAME, " (", YEAR_, "), Patch ", patch_id))
+
+
+
+data_path <- paste0(here(),"/Data/raster_df_mega")
+
+# Color and label definitions
+veg_colors <- c(
+  '1' = '#956733', '2' = '#a7b5a5', '3' = '#0940ca', '4' = '#d8bf58',
+  '5' = '#6dcd2b', '6' = '#ffacc9', '7' = '#0e4f12',
+  '8' = '#7b8d6a', '9' = '#e97451'
+)
+
+veg_labels <- c(
+  '1' = 'shrub', '4' = 'open woodland', '5' = 'herbaceous',
+  '7' = 'conifer', '8' = 'sagebrush', '9' = 'dense woodland'
+)
+
+# Store individual plots
+plot_list <- list()
+
+# Loop
+for (i in 1:nrow(selected_patches)) {
+  fire_id <- selected_patches$fire_id[i]
+  patch_id <- selected_patches$patch_id[i]
+  title_text <- selected_patches$title[i]
+
+  df_file <- file.path(data_path, paste0(fire_id, ".csv"))
+  if (!file_exists(df_file)) next
+
+  df_fire <- fread(df_file)
+  df_patch <- df_fire %>% filter(id == patch_id)
+
+  veg_df <- df_patch %>% select(starts_with("RF_post"), RF_pre_veg)
+
+  veg_long <- veg_df %>%
+    pivot_longer(cols = everything(), names_to = "year_label", values_to = "veg_class") %>%
+    mutate(
+      rel_year = ifelse(year_label == "RF_pre_veg", 0,
+                        as.integer(gsub("RF_post(\\d+)_veg", "\\1", year_label))),
+      veg_class = as.character(veg_class)
+    ) %>%
+    group_by(rel_year, veg_class) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    mutate(
+      veg_class = factor(veg_class, levels = c(sort(unique(veg_class[veg_class != "7"])), "7"))
+    ) %>%
+    arrange(rel_year, veg_class)
+
+  used_levels <- levels(veg_long$veg_class)
+  veg_colors_ordered <- veg_colors[used_levels]
+  veg_labels_ordered <- veg_labels[used_levels]
+  
+
+  p <- ggplot(veg_long, aes(x = rel_year, y = count, fill = veg_class)) +
+    geom_bar(stat = "identity", position = "stack", width = 0.7) +
+    scale_fill_manual(values = veg_colors_ordered,
+                      labels = veg_labels_ordered,
+                      name = "Vegetation class",
+                      drop = FALSE, na.translate = FALSE) +
+    labs(
+      title = title_text,
+      x = "Years since fire",
+      y = NULL
+    ) +
+    #xlim(-1, 23) +
+    theme_classic(base_size = 12) +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      legend.position = "bottom",
+      legend.direction = "horizontal",
+      legend.title = element_text(size = 11),
+      legend.text = element_text(size = 10)
+    )
+
+  plot_list[[i]] <- p
+
+}
+# 1. Extract the legend from a copy of plot 1 *with* legend
+legend_plot <- plot_list[[1]] + theme(legend.position = "bottom", legend.direction = "horizontal")
+legend <- get_legend(legend_plot)
+
+# 2. Remove x-axis labels and ticks from all plots
+plot_list <- lapply(plot_list, \(p) {
+  p +
+    theme(
+      axis.title.x = element_blank(),
+      legend.position = "none"
+    )
+})
+
+# 3. Remove y-axis text from all but the first plot
+plot_list[[2]] <- plot_list[[2]]
+plot_list[[3]] <- plot_list[[3]] 
+
+# 4. Combine the plots horizontally
+plots_combined <- plot_grid(
+  plotlist = plot_list,
+  nrow = 1,
+  labels = c("A", "B", "C"),
+  label_size = 12,
+  align = "v",
+  axis = "l"
+)
+
+# 5. Shared axis labels
+y_axis_label <- textGrob("Pixel count", gp = gpar(fontsize = 12), rot = 90)
+x_axis_label <- textGrob("Years since fire", gp = gpar(fontsize = 12))
+
+# 6. Stack: Y-label + Plots, then legend, then X-label
+plot_with_y <- plot_grid(
+  y_axis_label, plots_combined,
+  rel_widths = c(0.04, 1),
+  nrow = 1
+)
+
+final_plot <- plot_grid(
+  plot_with_y,
+  legend,
+  x_axis_label,
+  ncol = 1,
+  rel_heights = c(1, 0.01, 0.07)
+)
+
+# 7. Show the final plot
+print(final_plot)
+
+
+
+```
+
+#Map patch location w/in fire
+
+```{r specific-patch-recovery-chunk2}
+# Plot a fire map (outline-ish) with the patch in black
+library(data.table)
+library(ggplot2)
+library(ggspatial)
+
+
+#fire_id = c(10273, 10273, 10498),
+#patch_id = c(3647, 3692, 3279)
+#7514
+
+# Load data
+df <- fread(paste0(here(),"/Data/raster_df_mega/7514.csv"))
+
+# Plot with scale bar
+fire_patch_map <- ggplot(df, aes(x = x, y = y)) +
+  geom_point(color = "grey80", size = 0.4) +
+  geom_point(data = df[id == 3902], color = "black", size = 0.4) +
+  coord_fixed() +
+  theme_void() +
+  labs(title = "") +
+  annotation_scale(location = "bl", width_hint = 0.2, 
+                   text_cex = 0.6, line_width = 0.7)
+
+
+
+```
+
+
+# Sankey plot of all fires pre-, 3 post and 20 yrs post-fire
+
+```{r sankey-plot-of-all-fires-pre-3-post-and-20-yrs-post-fire-chunk1}
+# Directory containing the CSV files
+directory <- paste0(here(),"/Data/raster_df_mega")
+
+# Get a list of all CSV files in the directory
+csv_files <- list.files(directory, pattern = "\\.csv$", full.names = TRUE)
+
+# Filter files that contain any of the fire_IDs in their filename
+filtered_files <- csv_files[sapply(csv_files, function(file) {
+  fire_id <- as.numeric(str_extract(basename(file), "\\d+")) # Extract numeric ID from filename
+  fire_id %in% megafire_IDs
+})]
+
+# Read and bind the filtered files into one dataframe
+data <- bind_rows(lapply(filtered_files, fread))
+
+data <- data %>%
+  filter(rdnbr_class == 3)
+
+
+library(networkD3)
+
+# Step 1: Format the dataframe
+df <- data %>%
+  dplyr::select(RF_pre_veg, RF_post2_veg, RF_post20_veg) %>%
+  mutate(across(everything(), as.character)) %>%
+  filter(!is.na(RF_pre_veg), !is.na(RF_post2_veg), !is.na(RF_post20_veg))  # clean NAs
+
+# Step 2: Add stage labels to differentiate node names
+df <- df %>%
+  mutate(
+    pre = paste0(RF_pre_veg, " (pre)"),
+    post2 = paste0(RF_post2_veg, " (2yr)"),
+    post20 = paste0(RF_post20_veg, " (20yr)")
+  )
+
+# Step 3: Create links for two transitions
+links_all <- bind_rows(
+  df %>% count(source = pre, target = post2),
+  df %>% count(source = post2, target = post20)
+)
+
+# Step 4: Create node list
+nodes <- data.frame(name = unique(c(links_all$source, links_all$target)))
+
+# Step 5: Add node IDs
+nodes <- nodes %>%
+  mutate(node_id = row_number() - 1)
+
+# Step 6: Map source/target to IDs
+links_all <- links_all %>%
+  left_join(nodes, by = c("source" = "name")) %>%
+  rename(source_id = node_id) %>%
+  left_join(nodes, by = c("target" = "name")) %>%
+  rename(target_id = node_id)
+
+# Step 7: Define color palette (using numeric veg classes)
+colors_all <- c(
+  '1' = '#956733', '2' = '#a7b5a5', '3' = '#0940ca', '4' = '#d8bf58',
+  '5' = '#6dcd2b', '6' = '#ffacc9', '7' = '#0e4f12', '8' = '#7b8d6a', '9' = '#e97451'
+)
+
+# Extract numeric part of node name to assign color
+nodes$veg_code <- gsub(" .*", "", nodes$name)
+
+# Create D3-compatible color scale
+node_colors <- paste0(
+  "d3.scaleOrdinal().domain([", 
+  paste0("'", names(colors_all), "'", collapse = ", "), 
+  "]).range([", 
+  paste0("'", colors_all, "'", collapse = ", "), 
+  "])"
+)
+
+# Step 8: Sankey plot
+sankeyNetwork(
+  Links = links_all,
+  Nodes = nodes,
+  Source = "source_id",
+  Target = "target_id",
+  Value = "n",
+  NodeID = "name",
+  NodeGroup = "veg_code",       # Color by veg class
+  colourScale = node_colors,
+  sinksRight = FALSE,
+  fontSize = 12,
+  nodeWidth = 30
+)
+
+
+```
+
+## Counts for rdnbr_class/ veg combo by fire and overall
+
+```{r counts-for-rdnbr-class-veg-combo-by-fire-and-overall-chunk1}
+library(data.table)
+library(dplyr)
+library(stringr)
+
+# Directory and OBJECTID list
+directory <- paste0(here(),"/Data/raster_df_mega")
+
+# Initialize empty list to collect summary data
+summary_list <- list()
+
+# Loop over fire IDs
+for (id in megafire_IDs) {
+  file_path <- file.path(directory, paste0(id, ".csv"))
+  
+  if (file.exists(file_path)) {
+    message("Processing OBJECTID: ", id)
+    
+    df <- tryCatch({
+      # Read only relevant columns, disable memory mapping
+      fread(file_path, select = c("rdnbr_class", "RF_pre_veg"), showProgress = FALSE)
+    }, error = function(e) {
+      warning(paste("Error reading file:", file_path, "-", e$message))
+      return(NULL)
+    })
+    
+    if (!is.null(df)) {
+      # Summarize counts by group
+      df_summary <- df %>%
+        filter(!is.na(rdnbr_class), !is.na(RF_pre_veg)) %>%
+        group_by(rdnbr_class, RF_pre_veg) %>%
+        summarise(count = n(), .groups = "drop") %>%
+        mutate(OBJECTID = id)
+      
+      summary_list[[as.character(id)]] <- df_summary
+    }
+  } else {
+    warning("File not found for ID: ", id)
+  }
+}
+
+# Combine into one master dataframe
+master_summary <- bind_rows(summary_list)
+
+# View first few rows
+print(head(master_summary))
+
+
+master_summary_all <- master_summary %>%
+  group_by(rdnbr_class, RF_pre_veg) %>%
+  summarise(total_count = sum(count), .groups = "drop")
+
+master_summary_all$area_ha <- master_summary_all$total_count*0.09
+
+fwrite(master_summary_all, paste0(here(),"/Data/pre_veg_rdnbr_class_counts.csv"))
+
+
+```
+
+## Veg time series stacked bars
+
+```{r veg-time-series-stacked-bars-chunk1}
+########################## veg classification time series #######################
+
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+
+# Load the data
+df <- fread(paste0(here(),"/Data/raster_df_mega/7808.csv"))
+
+# Define vegetation color palette (add "10" for 'Other')
+veg_colors <- c(
+  '7' = '#0e4f12',  # Conifer
+  '1' = '#956733',
+  '4' = '#d8bf58',
+  '5' = '#6dcd2b',
+  '8' = '#7b8d6a',
+  '9' = '#e97451',
+   '2'='#a7b5a5',
+  '3'='#0940ca',
+  '6'='#ffacc9'
+)
+
+# Step 1: Identify post-fire columns dynamically
+veg_cols <- grep("^RF_post\\d+_veg$", names(df), value = TRUE)
+
+# Step 2: Pivot to long format (post-fire)
+df_post <- df %>%
+  dplyr::select(all_of(veg_cols)) %>%
+  mutate(row = row_number()) %>%
+  pivot_longer(-row, names_to = "year", values_to = "veg_class") %>%
+  mutate(
+    year = as.integer(gsub("RF_post(\\d+)_veg", "\\1", year)),
+    veg_class = as.character(veg_class)
+  ) %>%
+  group_by(year) %>%
+  mutate(
+    veg_class = ifelse(is.na(veg_class) & any(!is.na(veg_class)), "10", veg_class)  # replace NA if other values exist
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(veg_class)) %>%  # remove rows that are fully NA
+  dplyr::select(-row)
+
+# Step 3: Add RF_pre_veg as year -1
+df_pre <- df %>%
+  dplyr::select(RF_pre_veg) %>%
+  rename(veg_class = RF_pre_veg) %>%
+  mutate(
+    year = -1,
+    veg_class = as.character(veg_class)
+  )
+
+# Combine pre and post data
+df_combined <- bind_rows(df_pre, df_post)
+
+# Step 4: Calculate proportions
+df_prop <- df_combined %>%
+  group_by(year, veg_class) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(year) %>%
+  mutate(proportion = count / sum(count))
+
+# Set factor levels for stacking order: conifer ('7') at the bottom
+df_prop$veg_class <- factor(df_prop$veg_class, levels = c("2","3", "4", "5","6", "8", "9","1","7"))
+
+# Step 5: Plot
+ggplot(df_prop, aes(x = year, y = proportion, fill = veg_class)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_vline(xintercept = 0, color = "red", linetype = "solid", linewidth = 1) +
+  annotate("text", x = 1.8, y = 1.05, label = "*Fire", color = "red", fontface = "bold", size = 4) +
+  scale_fill_manual(
+    values = veg_colors,
+    name = "Vegetation Class",
+    labels = c(
+      '1' = "Shrub",
+      '4' = "Open woodland",
+      '5' = "Herbaceous",
+      '8' = "Sagebrush",
+      '9' = "Dense woodland",
+      '7' = "Conifer",
+      '3' = "Water",
+      '2' = "Bare rock",
+      '6' = "Bare soil"
+    )
+  ) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(breaks = sort(unique(df_prop$year))) +  # only show years that exist
+  labs(
+    title = "Post-fire Vegetation Composition (with Pre-fire)",
+    x = "Years Since Fire",
+    y = "Proportion of Area"
+  ) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold")
+  )
+
+
+# Combine plots with shared legend
+combined_plot <- plot_grid(
+  p1 + theme(legend.position = "none"),
+  p2 + theme(legend.position = "none"),
+  p3 + theme(legend.position = "none"),
+  nrow = 1,
+  labels = c("A", "B", "C"),
+  label_size = 12
+)
+
+# Extract legend
+legend <- get_legend(p1)
+
+# Final panelled output
+final_plot <- plot_grid(combined_plot, legend, ncol = 1, rel_heights = c(1, 0.1))
+print(final_plot)
+
+
+```
+
+# Split by planted/ not planted
+
+```{r split-by-planted-not-planted-chunk1}
+########################## veg classification time series #######################
+# Rim fire (2013): 3983
+# 3573 also long enough
+# 8985
+# Piute 5529
+# Blue 7514
+
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+
+# Load the data
+df <- fread(paste0(here(),"/Data/raster_df_mega_repeated_planting/5529.csv"))
+
+# Define vegetation color palette (add "10" for 'Other')
+veg_colors <- c(
+  '7' = '#0e4f12',  # Conifer
+  '1' = '#956733',
+  '4' = '#d8bf58',
+  '5' = '#6dcd2b',
+  '8' = '#7b8d6a',
+  '9' = '#e97451',
+   '2'='#a7b5a5',
+  '3'='#0940ca',
+  '6'='#ffacc9'
+)
+
+# Step 1: Identify post-fire columns dynamically
+veg_cols <- grep("^RF_post\\d+_veg$", names(df), value = TRUE)
+
+# Step 2: Pivot to long format (post-fire)
+df_post <- df %>%
+  dplyr::select(all_of(veg_cols)) %>%
+  mutate(row = row_number()) %>%
+  pivot_longer(-row, names_to = "year", values_to = "veg_class") %>%
+  mutate(
+    year = as.integer(gsub("RF_post(\\d+)_veg", "\\1", year)),
+    veg_class = as.character(veg_class)
+  ) %>%
+  group_by(year) %>%
+  mutate(
+    veg_class = ifelse(is.na(veg_class) & any(!is.na(veg_class)), "10", veg_class)  # replace NA if other values exist
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(veg_class)) %>%  # remove rows that are fully NA
+  dplyr::select(-row)
+
+# Step 3: Add RF_pre_veg as year -1
+df_pre <- df %>%
+  dplyr::select(RF_pre_veg) %>%
+  rename(veg_class = RF_pre_veg) %>%
+  mutate(
+    year = -1,
+    veg_class = as.character(veg_class)
+  )
+
+# Combine pre and post data
+df_combined <- bind_rows(df_pre, df_post)
+
+# Step 4: Calculate proportions
+df_prop <- df_combined %>%
+  group_by(year, veg_class) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(year) %>%
+  mutate(proportion = count / sum(count))
+
+# Set factor levels for stacking order: conifer ('7') at the bottom
+df_prop$veg_class <- factor(df_prop$veg_class, levels = c("2","3", "4", "5","6", "8", "9","1","7"))
+
+# Step 5: Plot
+plot_veg_series_all <- ggplot(df_prop, aes(x = year, y = proportion, fill = veg_class)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_vline(xintercept = 0, color = "red", linetype = "solid", linewidth = 1) +
+  annotate("text", x = 1.8, y = 1.05, label = "*Fire", color = "red", fontface = "bold", size = 4) +
+  scale_fill_manual(
+    values = veg_colors,
+    name = "Vegetation Class",
+    labels = c(
+      '1' = "Shrub",
+      '4' = "Open woodland",
+      '5' = "Herbaceous",
+      '8' = "Sagebrush",
+      '9' = "Dense woodland",
+      '7' = "Conifer",
+      '3' = "Water",
+      '2' = "Bare rock",
+      '6' = "Bare soil"
+    )
+  ) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(breaks = sort(unique(df_prop$year))) +  # only show years that exist
+  labs(
+    title = "Post-fire Vegetation Composition (with Pre-fire)",
+    x = "Years Since Fire",
+    y = "Proportion of Area"
+  ) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold")
+  )
+
+
+################ Split high severity into tree planting vs. non tree planting post-fire ##################
+
+# Step 2: Long format with rdnbr_class
+df_post <- df %>%
+  dplyr::select(all_of(veg_cols), rdnbr_class, tree_planting) %>%
+  mutate(row = row_number()) %>%
+  pivot_longer(cols = -c(row, rdnbr_class, tree_planting), names_to = "year", values_to = "veg_class") %>%
+  mutate(
+    year = as.integer(gsub("RF_post(\\d+)_veg", "\\1", year)),
+    veg_class = as.character(veg_class)
+  ) %>%
+  group_by(row, year, rdnbr_class, tree_planting) %>%
+  mutate(
+    veg_class = ifelse(is.na(veg_class) & any(!is.na(veg_class)), "10", veg_class)
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(veg_class)) %>%
+  dplyr::select(-row)
+
+
+# Step 3: Pre-fire vegetation (assume all share same rdnbr_class as in their row)
+df_pre <- df %>%
+  dplyr::select(RF_pre_veg, rdnbr_class, tree_planting) %>%
+  rename(veg_class = RF_pre_veg) %>%
+  mutate(
+    year = -1,
+    veg_class = as.character(veg_class)
+  )
+
+
+# Combine
+df_combined <- bind_rows(df_pre, df_post)
+
+# Step 4: Proportions
+df_prop <- df_combined %>%
+  group_by(rdnbr_class, year, tree_planting, veg_class) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(rdnbr_class, year, tree_planting) %>%
+  mutate(proportion = count / sum(count))
+
+
+# Step 5: Order vegetation class (stacking)
+df_prop$veg_class <- factor(df_prop$veg_class,
+                            levels = c("2", "3", "4", "5", "6", "8", "9", "1", "7"))
+
+
+df_prop <- df_prop %>%
+  mutate(
+    rdnbr_class = as.character(rdnbr_class),
+    rdnbr_class = dplyr::recode(rdnbr_class,
+                         "0" = "Unchanged",
+                         "1" = "Low",
+                         "2" = "Moderate",
+                         "3" = "High"),
+    rdnbr_class = factor(rdnbr_class, levels = c("Unchanged", "Low", "Moderate", "High"))
+  )
+
+
+# Step 6: Plot with facets
+df_plot <- df_prop
+
+faceted_plot_planting <- ggplot(df_plot, aes(x = year, y = proportion, fill = veg_class)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_vline(xintercept = 0, color = "red", linetype = "solid", linewidth = 1) +
+  annotate("text", x = 1.8, y = 1.05, label = "*Fire", color = "red", fontface = "bold", size = 4) +
+  scale_fill_manual(
+    values = veg_colors,
+    name = "Vegetation class",
+    labels = c(
+      '1' = "Shrub",
+      '4' = "Open woodland",
+      '5' = "Herbaceous",
+      '8' = "Sagebrush",
+      '9' = "Dense woodland",
+      '7' = "Conifer",
+      '3' = "Water",
+      '2' = "Bare rock",
+      '6' = "Bare soil",
+      '10' = "Other"
+    )
+  ) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(
+    title = "",
+    x = "Years since fire",
+    y = "Percent of total area"
+  ) +
+  facet_wrap(~tree_planting, labeller = as_labeller(c(`0` = "No Tree Planting", `1` = "Tree Planting"))) +
+  theme_pubr() +
+  theme(
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold"),
+    strip.text = element_text(face = "bold")
+  )
+
+
+
+
+################ Split by burn severity ##################################################################
+
+df_plot <- df_prop %>% filter(rdnbr_class == "High")
+
+faceted_plot_severity <- ggplot(df_plot, aes(x = year, y = proportion, fill = veg_class)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_vline(xintercept = 0, color = "red", linetype = "solid", linewidth = 1) +
+  annotate("text", x = 1.8, y = 1.05, label = "*Fire", color = "red", fontface = "bold", size = 4) +
+  scale_fill_manual(
+    values = veg_colors,
+    name = "Vegetation class",
+    labels = c(
+      '1' = "Shrub",
+      '4' = "Open woodland",
+      '5' = "Herbaceous",
+      '8' = "Sagebrush",
+      '9' = "Dense woodland",
+      '7' = "Conifer",
+      '3' = "Water",
+      '2' = "Bare rock",
+      '6' = "Bare soil",
+      '10' = "Other"
+    )
+  ) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(
+    title = "",
+    x = "Years since fire",
+    y = "Percent of total area"
+  ) +
+  facet_wrap(~tree_planting, labeller = as_labeller(c(`0` = "No Tree Planting", `1` = "Tree Planting"))) +
+  theme_pubr() +
+  theme(
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold"),
+    strip.text = element_text(face = "bold")
+  )
+
+```
+
+```{r split-by-planted-not-planted-chunk2}
+########################## veg classification time series faceted by burn severity class #########################
+# Size for exporting plots: 1050-830
+# 7808- Storrie Fire 2000
+# 9724- Campbell Fire 1990
+# 7412- McNally Fire 2002
+# 5718- Moonlight Fire 2007
+
+
+# Load data
+df <- fread(paste0(here(),"/Data/raster_df_mega/5718.csv"))
+
+# Define color palette
+veg_colors <- c(
+  '7' = '#0e4f12',  # Conifer
+  '1' = '#956733',
+  '4' = '#d8bf58',
+  '5' = '#6dcd2b',
+  '8' = '#7b8d6a',
+  '9' = '#e97451',
+  '2' = '#a7b5a5',
+  '3' = '#0940ca',
+  '6' = '#ffacc9'
+)
+
+# Step 1: Identify post-fire columns
+veg_cols <- grep("^RF_post\\d+_veg$", names(df), value = TRUE)
+
+# Step 2: Long format with rdnbr_class
+df_post <- df %>%
+  select(all_of(veg_cols), rdnbr_class) %>%
+  mutate(row = row_number()) %>%
+  pivot_longer(cols = -c(row, rdnbr_class), names_to = "year", values_to = "veg_class") %>%
+  mutate(
+    year = as.integer(gsub("RF_post(\\d+)_veg", "\\1", year)),
+    veg_class = as.character(veg_class)
+  ) %>%
+  group_by(row, year, rdnbr_class) %>%
+  mutate(
+    veg_class = ifelse(is.na(veg_class) & any(!is.na(veg_class)), "10", veg_class)
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(veg_class)) %>%
+  select(-row)
+
+# Step 3: Pre-fire vegetation (assume all share same rdnbr_class as in their row)
+df_pre <- df %>%
+  select(RF_pre_veg, rdnbr_class) %>%
+  rename(veg_class = RF_pre_veg) %>%
+  mutate(
+    year = -1,
+    veg_class = as.character(veg_class)
+  )
+
+# Combine
+df_combined <- bind_rows(df_pre, df_post)
+
+# Step 4: Proportions
+df_prop <- df_combined %>%
+  group_by(rdnbr_class, year, veg_class) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(rdnbr_class, year) %>%
+  mutate(proportion = count / sum(count))
+
+# Step 5: Order vegetation class (stacking)
+df_prop$veg_class <- factor(df_prop$veg_class,
+                            levels = c("2", "3", "4", "5", "6", "8", "9", "1", "7"))
+
+
+df_prop <- df_prop %>%
+  mutate(
+    rdnbr_class = as.character(rdnbr_class),  # ensure character for recode
+    rdnbr_class = dplyr::recode(rdnbr_class,
+                         "0" = "Unchanged",
+                         "1" = "Low",
+                         "2" = "Moderate",
+                         "3" = "High"),
+    rdnbr_class = factor(rdnbr_class, levels = c("Unchanged", "Low", "Moderate", "High"))
+  )
+
+# Step 6: Plot with facets
+ggplot(df_prop, aes(x = year, y = proportion, fill = veg_class)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_vline(xintercept = 0, color = "red", linetype = "solid", linewidth = 1) +
+  annotate("text", x = 1.8, y = 1.05, label = "*Fire", color = "red", fontface = "bold", size = 4) +
+  scale_fill_manual(
+    values = veg_colors,
+    name = "Vegetation class",
+    labels = c(
+      '1' = "Shrub",
+      '4' = "Open woodland",
+      '5' = "Herbaceous",
+      '8' = "Sagebrush",
+      '9' = "Dense woodland",
+      '7' = "Conifer",
+      '3' = "Water",
+      '2' = "Bare rock",
+      '6' = "Bare soil",
+      '10' = "Other"
+    )
+  ) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(
+    title = "",
+    x = "Years since fire",
+    y = "Percent of total area"
+  ) +
+  facet_wrap(~rdnbr_class) +
+  theme_pubr() +
+  theme(
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold"),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+# Megafire table
+
+```{r megafire-table-chunk1}
+# Load every csv file, calculate summary metrics per fire and save in master table
+
+library(data.table)
+library(fs)
+
+# Set input directory
+input_dir <- paste0(here(),"/Data/raster_df_mega_repeated_planting/")
+
+# List CSV files
+csv_files <- dir_ls(input_dir, glob = "*.csv")
+
+# Initialize empty list to hold summaries
+summary_list <- list()
+
+# Loop through each CSV
+for (csv_file in csv_files) {
+  message("Processing: ", path_file(csv_file))
+  
+  # Read data
+  df <- fread(csv_file)
+  
+  # Skip if required columns are missing
+  if (!all(c("OBJECTID", "fire_year", "rdnbr_class", "RF_pre_veg") %in% names(df))) {
+    warning("Missing required columns in: ", csv_file)
+    next
+  }
+  
+  # Extract fire metadata
+  fire_id <- unique(df$OBJECTID)
+  fire_year <- unique(df$fire_year)
+  
+  if (length(fire_id) != 1 || length(fire_year) != 1) {
+    warning("Inconsistent OBJECTID or fire_year in: ", csv_file)
+    next
+  }
+  
+  # Count rdnbr_class values (0 to 3)
+  rdnbr_counts <- as.list(table(factor(df$rdnbr_class, levels = 0:3)))
+  names(rdnbr_counts) <- paste0("rdnbr_", names(rdnbr_counts))
+  
+  # Count RF_pre_veg values (1 to 9)
+  veg_counts <- as.list(table(factor(df$RF_pre_veg, levels = 1:9)))
+  names(veg_counts) <- paste0("veg_", names(veg_counts))
+  
+  # Combine everything
+  summary_row <- c(
+    OBJECTID = fire_id,
+    fire_year = fire_year,
+    rdnbr_counts,
+    veg_counts
+  )
+  
+  summary_list[[length(summary_list) + 1]] <- summary_row
+}
+
+# Combine into a master data.table
+summary_dt <- rbindlist(summary_list, fill = TRUE)
+
+# Save if needed
+# fwrite(summary_dt, "C:/Users/jscho/Documents/Megafires-1985-2023-Data/summary_metrics_by_fire.csv")
+
+# Show the summary
+summary_dt
+
+# ---- 🔗 Join Fire Name, Area, and Cause from fire_metrics_mega ----
+summary_dt[, OBJECTID := as.integer(OBJECTID)]
+
+summary_dt <- summary_dt %>%
+  left_join(
+    fire_metrics_mega %>%
+      dplyr::select(OBJECTID, FIRE_NAME, area_ha, CAUSE) %>%
+      dplyr::rename(Fire = FIRE_NAME),
+    by = "OBJECTID"
+  ) %>%
+  select(Fire, area_ha, CAUSE, everything(), -OBJECTID)
+
+# ---- 🛠 Recode CAUSE values ----
+# First, make sure CAUSE is character
+summary_dt[, CAUSE := as.character(CAUSE)]
+
+# Define recode mapping
+cause_labels <- c(
+  "1" = "Lightning",
+  "2" = "Equipment use",
+  "3" = "Smoking",
+  "4" = "Campfire",
+  "5" = "Debris",
+  "6" = "Railroad",
+  "7" = "Arson",
+  "8" = "Playing with fire",
+  "9" = "Miscellaneous",
+  "10" = "Vehicle",
+  "11" = "Powerline",
+  "12" = "Firefighter training",
+  "13" = "Non-firefighter training",
+  "14" = "Unknown/ unidentified",
+  "15" = "Structure",
+  "16" = "Aircraft",
+  "17" = "Volcanic",
+  "18" = "Escaped prescribed burn",
+  "19" = "Illegal alien campfire"
+)
+
+# Recode CAUSE using the mapping
+summary_dt[, CAUSE := cause_labels[CAUSE]]
+
+
+
+summary_dt <- summary_dt %>%
+  mutate(area_kha = round(area_ha / 1000, 1)) %>%
+  select(Fire, area_kha, CAUSE, everything(), -area_ha)
+
+fwrite(summary_dt, "/Outputs/summary_metrics_by_fire.csv")
+```
+
+```{r megafire-table-chunk2}
+### Calculate some areas
+library(sf)
+
+
+### Area within megafires on FS land with tree plantings
+
+# Load the shapefile
+shp <- st_read("C:/Users/jscho/Documents/Megafires-1985-2023-Data/Shapefiles/FACTS_tree_planting_1986_2024_in_megafires.shp")
+
+# Ensure the CRS is projected (not in degrees)
+st_crs(shp)
+
+
+# If needed, reproject to an appropriate projected CRS (e.g., EPSG:3310 for California)
+shp <- st_transform(shp, crs = 3310)
+
+# Calculate areas in square meters
+areas_m2 <- st_area(shp)
+
+# Total area (automatically returns units in m²)
+total_area_m2 <- sum(areas_m2)
+
+# Convert to hectares
+total_area_ha <- units::set_units(total_area_m2, ha)
+
+total_area_plantings_ha <- total_area_ha
+
+# Areas within megafires on FS land total
+# Load the shapefile
+shp <- st_read("C:/Users/jscho/Documents/Megafires-1985-2023-Data/Shapefiles/megafires_in_NF_area.shp")
+
+# Ensure the CRS is projected (not in degrees)
+st_crs(shp)
+
+
+# If needed, reproject to an appropriate projected CRS (e.g., EPSG:3310 for California)
+shp <- st_transform(shp, crs = 3310)
+
+# Calculate areas in square meters
+areas_m2 <- st_area(shp)
+
+# Total area (automatically returns units in m²)
+total_area_m2 <- sum(areas_m2)
+
+# Convert to hectares
+total_area_ha <- units::set_units(total_area_m2, ha)
+
+total_area_FS_ha <- total_area_ha
+
+
+# Total megafire area
+# Load the shapefile
+shp <- st_read("C:/Users/jscho/Documents/Megafires-1985-2023-Data/Shapefiles/SN_megafires_1985_2023.shp")
+
+# Ensure the CRS is projected (not in degrees)
+st_crs(shp)
+
+
+# If needed, reproject to an appropriate projected CRS (e.g., EPSG:3310 for California)
+shp <- st_transform(shp, crs = 3310)
+
+# Calculate areas in square meters
+areas_m2 <- st_area(shp)
+
+# Total area (automatically returns units in m²)
+total_area_m2 <- sum(areas_m2)
+
+# Convert to hectares
+total_area_ha <- units::set_units(total_area_m2, ha)
+
+total_area_megafires_ha <- total_area_ha
+
+```
+
+# ANOVA NEW
+
+```{r anova-new-chunk1}
+# Needs cleaning up!
+
+
+#Fire level datasets
+fire_metrics_mega <- fread("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/Megafire_paper/SN_megafires_1985_2023.csv", header=TRUE)
+
+megafire_IDs <- c(5529, 5718, 5721, 8026, 7808, 7747, 7996, 7961, 
+                  7412, 7514, 7242, 9714, 9724, 9487, 8985, 9039, 
+                  8747, 10495, 10498, 10504, 10094, 10273, 1819, 1772, 
+                  2111, 2140, 1210, 1211, 1216, 1215, 1220, 1319, 
+                  1315, 718, 911, 932, 869, 888, 945, 959, 504, 
+                  3363, 3567, 3573, 3574, 3051, 3094, 3188, 2706, 
+                  2147, 2531, 2415, 2618, 5207, 5309, 4277, 4285, 
+                  4306, 4380, 4386, 4374, 4500, 3983, 3992)
+
+#Patch level datasets- rdnbr
+patch_metrics_mega <- fread("C:/Users/jscho/OneDrive - University of Cambridge/PhD/Analyses/Dataframes/Megafire_paper/SN_patch_metrics_mega_rdnbr_1985_2023.csv")
+
+# Fire IDs
+fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
+              9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
+
+# File paths
+csv_dir <- "C:/Users/jscho/Documents/Megafires-1985-2023-Data/raster_df_mega_repeated_planting"
+csv_files <- list.files(csv_dir, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
+
+
+### Excluding patches with any pixels reburned or planted ###
+
+# Initialize list to hold per-fire summaries
+patch_list <- list()
+
+for (file in csv_files) {
+  fire_id <- as.integer(gsub("\\.csv$", "", basename(file)))
+  dt_full <- fread(file)
+  
+  # --- 🧱 Step 1: Pre-filter out all patches that ever had planting or reburn ---
+  excluded_ids <- unique(dt_full[tree_planting == 1 | reburn_20yrs == 1, id])
+  dt_full <- dt_full[!id %in% excluded_ids]
+  
+  # --- 📦 Step 2: Compute patch size & rdnbr_class from all pixels ---
+  patch_sizes <- dt_full[, .(n_total = .N, rdnbr_class = first(rdnbr_class)), by = id]
+  
+  # --- 🧼 Step 3: Now filter for pixels of interest ---
+  dt <- dt_full[RF_pre_veg == 7 & transitioned == 1]
+  
+  if (nrow(dt) == 0) next
+  
+  # Add flag for 20-year recovery
+  dt[, returned_20yrs := as.integer(returned == 1 & yrs_to_return < 21)]
+  
+  # Merge patch size info
+  dt <- merge(dt, patch_sizes, by = "id", all.x = TRUE)
+  dt[, rdnbr_class := rdnbr_class.x]
+  dt[, rdnbr_class.x := NULL]
+  dt[, rdnbr_class.y := NULL]
+  
+  
+  # --- 🧾 Step 4: Summarize at patch level ---
+  patch_summary <- dt[, .(
+    fire_id = fire_id,
+    rdnbr_class = first(rdnbr_class),  # from patch_sizes
+    n_total = first(n_total),
+    n_returned = sum(returned_20yrs, na.rm = TRUE)
+  ), by = id]
+  
+  # Assign patch size class
+  patch_summary[, patch_size_class := cut(
+    n_total,
+    breaks = c(1, 100, 1000, 10000, 1500000),
+    labels = c("small", "medium", "large", "very_large"),
+    include.lowest = TRUE
+  )]
+  
+  patch_summary[, abs_not_recovered := n_total - n_returned]
+  
+  patch_list[[length(patch_list) + 1]] <- patch_summary
+}
+
+# Combine all fires' patch summaries
+patch_data_clean <- rbindlist(patch_list)
+
+# Filter out any NA patch size or missing rdnbr_class
+patch_data_clean <- patch_data_clean[!is.na(patch_size_class) & !is.na(rdnbr_class) & rdnbr_class > 0]
+
+
+patch_data_clean <- patch_data_clean %>%
+  mutate(n_bins = cut(n_total,
+                      breaks = c(1, 100, 1000,10000,1500000),
+                      labels = c("small","medium","large","very_large"),
+                      include.lowest = TRUE))
+
+
+
+patch_data_clean$prop_orig_con_20 <- patch_data_clean$n_returned / patch_data_clean$n_total
+
+
+
+### Run ANOVA ###
+# ANOVA
+patch_data_clean <- patch_data_clean %>%
+  mutate(n_bins_rdnbr = paste0(as.character(n_bins), "_", as.character(rdnbr_class)))
+
+patch_data_clean$rdnbr_class <- as.factor(patch_data_clean$rdnbr_class)
+
+# Run one-way ANOVA- This tests if mean prop_orig_con_20 differs by group (i.e., small_1, medium_3, etc.).
+anova_result <- aov(prop_orig_con_20 ~ n_bins_rdnbr, data = patch_data_clean)
+summary(anova_result)
+
+
+# Two-way ANOVA with interaction- This will show Main effects of patch size (n_bins), Main effects of burn severity (rdnbr_class), Interaction effects between the two
+
+anova_interaction <- aov(prop_orig_con_20 ~ n_bins * rdnbr_class, data = patch_data_clean)
+summary(anova_interaction)
+
+# Normality of residuals
+plot(anova_result, which = 2)  # Q-Q plot
+
+# Homogeneity of variance
+plot(anova_result, which = 1)  # Residuals vs fitted
+
+# Levene's Test (optional, from car package)
+library(car)
+leveneTest(prop_orig_con_20 ~ n_bins_rdnbr, data = patch_data_clean)
+
+TukeyHSD(anova_result)
+
+TukeyHSD(anova_interaction)
+
+
+
+
+
+### Original: with patch_metrics dataframe ######
+# For 20 year post-fire series: patch size vs. perc. recov after 20 years
+
+patch_metrics_mega <- patch_metrics_mega %>%
+  mutate(n_bins = cut(n,
+                      breaks = c(1, 100, 1000,10000,1500000),
+                      labels = c("small","medium","large","very_large"),
+                      include.lowest = TRUE))
+
+# Select patches with at least 20 years post-fire history
+filtered_patch_metrics <- patch_metrics_mega %>%
+  filter(OBJECTID %in% megafire_IDs)
+
+filtered_patch_metrics$prop_con_trans <- 1- (filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7)
+filtered_patch_metrics$prop_orig_con_1 <- filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_3 <- filtered_patch_metrics$count_RF_post1_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_5 <- filtered_patch_metrics$count_RF_post5_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_10 <- filtered_patch_metrics$count_RF_post10_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_15 <- filtered_patch_metrics$count_RF_post15_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$prop_orig_con_20 <- filtered_patch_metrics$count_RF_post20_veg_7 / filtered_patch_metrics$count_RF_pre_veg_7
+filtered_patch_metrics$abs_con_notRecov_20yrs <- filtered_patch_metrics$count_RF_pre_veg_7 - filtered_patch_metrics$count_RF_post20_veg_7
+
+
+filtered_patch_metrics_HS <- filtered_patch_metrics %>%
+  filter(rdnbr_class==3)
+
+filtered_patch_metrics_5con <- filtered_patch_metrics %>%
+  filter(count_RF_pre_veg_7 > 4)
+
+filtered_patch_metrics_HS_5con <- filtered_patch_metrics_HS %>%
+  filter(count_RF_pre_veg_7 > 4)
+
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  filter(rdnbr_class >0)
+
+# Combine n_bins and rdnbr_class into a single factor for the x-axis
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = interaction(n_bins, rdnbr_class, sep = "_"))
+
+
+# Add spacing to the groups by adding empty levels
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = as.factor(n_bins_rdnbr)) %>%
+  arrange(n_bins_rdnbr, rdnbr_class) %>%
+  mutate(
+    n_bins_rdnbr = factor(n_bins_rdnbr, levels = c(levels(n_bins_rdnbr), "")),  # Add an empty level for gaps
+    rdnbr_class = as.factor(rdnbr_class)  # Ensure rdnbr_class is a factor
+  )
+
+# Summarize data for the marginal bar plot
+marginal_data <- filtered_patch_metrics_5con %>%
+  group_by(n_bins_rdnbr) %>%
+  summarize(total_abs_con_notRecov = sum(abs_con_notRecov_20yrs, na.rm = TRUE))
+
+marginal_data$total_abs_con_notRecov_ha <- marginal_data$total_abs_con_notRecov * 0.09
+
+# Inspect unique values in n_bins_rdnbr
+unique_bins <- unique(filtered_patch_metrics_5con$n_bins_rdnbr)
+
+# Reorder levels dynamically based on observed values
+filtered_patch_metrics_5con <- filtered_patch_metrics_5con %>%
+  mutate(n_bins_rdnbr = factor(n_bins_rdnbr, levels = c("small_1","small_2","small_3", "medium_1","medium_2","medium_3", "large_1","large_2","large_3","very_large_1","very_large_2","very_large_3")))  # Replace with actual levels if different
+
+
+# ANOVA
+
+# Run one-way ANOVA- This tests if mean prop_orig_con_20 differs by group (i.e., small_1, medium_3, etc.).
+anova_result <- aov(prop_orig_con_20 ~ n_bins_rdnbr, data = filtered_patch_metrics_5con)
+summary(anova_result)
+
+
+# Two-way ANOVA with interaction- This will show Main effects of patch size (n_bins), Main effects of burn severity (rdnbr_class), Interaction effects between the two
+
+anova_interaction <- aov(prop_orig_con_20 ~ n_bins * rdnbr_class, data = filtered_patch_metrics_5con)
+summary(anova_interaction)
+
+# Normality of residuals
+plot(anova_result, which = 2)  # Q-Q plot
+
+# Homogeneity of variance
+plot(anova_result, which = 1)  # Residuals vs fitted
+
+# Levene's Test (optional, from car package)
+library(car)
+leveneTest(prop_orig_con_20 ~ n_bins_rdnbr, data = filtered_patch_metrics_5con)
+
+TukeyHSD(anova_result)
+
+TukeyHSD(anova_interaction)
+
+```

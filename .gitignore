@@ -12,3 +12,4 @@ Figures/
 *.geotiff
 *.jp2
 *.nc
+.Rproj.user
