@@ -1,0 +1,371 @@
+// ===================================================================
+// Landsat-based annual vegetation type classification for the
+// Sierra Nevada region 
+// creates yearly composites for 1984-2024
+
+// Code by Johanna Schönecker 
+// Edited 13th March 2025
+// ===================================================================
+
+// 📥 Inputs needed
+
+// Polygon specifying the study region, called 'outline'
+
+// Shapefile of Sierra Nevada ecoregion
+
+// Labelled training datasets for respective years i (2014, 2016, 2018, 2020, 2022) called training_i;
+// the property used as identifier is called 'label'
+
+// Outputs generated: Annual vegetation classification images at 30m spatial resolution for the Sierra Nevada region,
+// saved in google drive folder 'Veg_classification_fires' which needs to be created beforehand.
+
+// The vegetation key is as follows:
+/ / 1 - shrub, 2 - rock , 3 - water, 4 - opend woodland, 5 - herbaceous, 6 - bare soil , 7 - conifer, 8 - sagebrush, 9 - dense woodland
+
+
+// ===================================================================
+
+// Define masking functions
+function maskL8sr(image) {
+  var qaMask = image.select('QA_PIXEL').bitwiseAnd(parseInt('11111', 2)).eq(0);
+  var saturationMask = image.select('QA_RADSAT').eq(0);
+
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+
+  return image.addBands(opticalBands, null, true)
+      .addBands(thermalBands, null, true)
+      .updateMask(qaMask)
+      .updateMask(saturationMask);
+}
+
+function maskL457sr(image) {
+  var qaMask = image.select('QA_PIXEL').bitwiseAnd(parseInt('11111', 2)).eq(0);
+  var saturationMask = image.select('QA_RADSAT').eq(0);
+
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+
+  return image.addBands(opticalBands, null, true)
+      .addBands(thermalBand, null, true)
+      .updateMask(qaMask)
+      .updateMask(saturationMask);
+}
+
+// ===================================================================
+// Train and assess random forest classifier
+// ===================================================================
+
+// Matching annual training data with bands of respective year Landsat and topographic variables
+
+// ===================================================================
+// Matching annual training data with bands of respective year Landsat and topographic variables
+// ===================================================================
+
+// Declare year of interest
+
+var year = 2016;
+
+
+//declare time frame of composite
+var start_date = year + '-06-01';
+var end_date= year + '-09-30';
+
+var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL8sr);
+var l5 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+var l7 = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+
+// Assign a common name to the sensor-specific bands.
+var LC8_BANDS = ['SR_B2',   'SR_B3',    'SR_B4',  'SR_B5',  'SR_B6',    'SR_B7',    'ST_B10']; //Landsat 8
+var LC7_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Landsat 7
+var LC5_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Llandsat 5
+var STD_NAMES = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'temp'];
+
+var l8 = ee.ImageCollection(l8).select(LC8_BANDS, STD_NAMES);// Landsat 8
+var l7 = ee.ImageCollection(l7).select(LC7_BANDS, STD_NAMES); //Landsat 7
+var l5 = ee.ImageCollection(l5).select(LC5_BANDS, STD_NAMES); //Landsat 5
+
+var landsat_coll = l5.merge(l7).merge(l8);
+
+var median = landsat_coll.median();
+var median = median.clip(outline);
+var image = median;
+
+var dataset = ee.Image('USGS/SRTMGL1_003');
+var elevation = dataset.select('elevation');
+var slope = ee.Terrain.slope(elevation);
+var aspect = ee.Terrain.aspect(elevation);
+var image = image.addBands(elevation);
+var image = image.addBands(slope);
+var image = image.addBands(aspect);
+
+// Label the training data with corresponding values of bands of median Landsat composite of respective year
+var label = 'label';
+var bands = ['blue','green','red','nir','swir1','swir2','temp','elevation','slope','aspect'];
+var input = image.select(bands);
+
+var trainImage_2016 = input.sampleRegions({
+  collection: training_2016, 
+  properties: [label],
+  scale: 30
+});
+
+
+// Declare year of interest
+
+var year = 2018;
+
+
+//declare time frame of composite
+var start_date = year + '-06-01';
+var end_date= year + '-09-30';
+
+var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL8sr);
+var l5 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+var l7 = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+
+// Assign a common name to the sensor-specific bands.
+var LC8_BANDS = ['SR_B2',   'SR_B3',    'SR_B4',  'SR_B5',  'SR_B6',    'SR_B7',    'ST_B10']; //Landsat 8
+var LC7_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Landsat 7
+var LC5_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Llandsat 5
+var STD_NAMES = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'temp'];
+
+var l8 = ee.ImageCollection(l8).select(LC8_BANDS, STD_NAMES);// Landsat 8
+var l7 = ee.ImageCollection(l7).select(LC7_BANDS, STD_NAMES); //Landsat 7
+var l5 = ee.ImageCollection(l5).select(LC5_BANDS, STD_NAMES); //Landsat 5
+
+var landsat_coll = l5.merge(l7).merge(l8);
+
+var median = landsat_coll.median();
+var median = median.clip(outline);
+var image = median;
+
+var dataset = ee.Image('USGS/SRTMGL1_003');
+var elevation = dataset.select('elevation');
+var slope = ee.Terrain.slope(elevation);
+var aspect = ee.Terrain.aspect(elevation);
+var image = image.addBands(elevation);
+var image = image.addBands(slope);
+var image = image.addBands(aspect);
+
+// Label the training data with corresponding values of bands of median Landsat composite of respective year
+var label = 'label';
+var bands = ['blue','green','red','nir','swir1','swir2','temp','elevation','slope','aspect'];
+var input = image.select(bands);
+
+var trainImage_2018 = input.sampleRegions({
+  collection: training_2018, 
+  properties: [label],
+  scale: 30
+});
+
+
+// Declare year of interest
+
+var year = 2020;
+
+
+//declare time frame of composite
+var start_date = year + '-06-01';
+var end_date= year + '-09-30';
+
+var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL8sr);
+var l5 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+var l7 = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+
+// Assign a common name to the sensor-specific bands.
+var LC8_BANDS = ['SR_B2',   'SR_B3',    'SR_B4',  'SR_B5',  'SR_B6',    'SR_B7',    'ST_B10']; //Landsat 8
+var LC7_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Landsat 7
+var LC5_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Llandsat 5
+var STD_NAMES = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'temp'];
+
+var l8 = ee.ImageCollection(l8).select(LC8_BANDS, STD_NAMES);// Landsat 8
+var l7 = ee.ImageCollection(l7).select(LC7_BANDS, STD_NAMES); //Landsat 7
+var l5 = ee.ImageCollection(l5).select(LC5_BANDS, STD_NAMES); //Landsat 5
+
+var landsat_coll = l5.merge(l7).merge(l8);
+
+var median = landsat_coll.median();
+var median = median.clip(outline);
+var image = median;
+
+var dataset = ee.Image('USGS/SRTMGL1_003');
+var elevation = dataset.select('elevation');
+var slope = ee.Terrain.slope(elevation);
+var aspect = ee.Terrain.aspect(elevation);
+var image = image.addBands(elevation);
+var image = image.addBands(slope);
+var image = image.addBands(aspect);
+
+// Label the training data with corresponding values of bands of median Landsat composite of respective year
+var label = 'label';
+var bands = ['blue','green','red','nir','swir1','swir2','temp','elevation','slope','aspect'];
+var input = image.select(bands);
+
+var trainImage_2020 = input.sampleRegions({
+  collection: training_2020, 
+  properties: [label],
+  scale: 30
+});
+
+
+
+// Declare year of interest
+
+var year = 2022;
+
+
+//declare time frame of composite
+var start_date = year + '-06-01';
+var end_date= year + '-09-30';
+
+var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL8sr);
+var l5 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+var l7 = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+
+// Assign a common name to the sensor-specific bands.
+var LC8_BANDS = ['SR_B2',   'SR_B3',    'SR_B4',  'SR_B5',  'SR_B6',    'SR_B7',    'ST_B10']; //Landsat 8
+var LC7_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Landsat 7
+var LC5_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Llandsat 5
+var STD_NAMES = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'temp'];
+
+var l8 = ee.ImageCollection(l8).select(LC8_BANDS, STD_NAMES);// Landsat 8
+var l7 = ee.ImageCollection(l7).select(LC7_BANDS, STD_NAMES); //Landsat 7
+var l5 = ee.ImageCollection(l5).select(LC5_BANDS, STD_NAMES); //Landsat 5
+
+var landsat_coll = l5.merge(l7).merge(l8);
+
+var median = landsat_coll.median();
+var median = median.clip(outline);
+var image = median;
+
+var dataset = ee.Image('USGS/SRTMGL1_003');
+var elevation = dataset.select('elevation');
+var slope = ee.Terrain.slope(elevation);
+var aspect = ee.Terrain.aspect(elevation);
+var image = image.addBands(elevation);
+var image = image.addBands(slope);
+var image = image.addBands(aspect);
+
+// Label the training data with corresponding values of bands of median Landsat composite of respective year
+var label = 'label';
+var bands = ['blue','green','red','nir','swir1','swir2','temp','elevation','slope','aspect'];
+var input = image.select(bands);
+
+var trainImage_2022 = input.sampleRegions({
+  collection: training_2022, 
+  properties: [label],
+  scale: 30
+});
+
+
+// Merge training data from all available years
+var trainImage_allYears = trainImage_2016.merge(trainImage_2018).merge(trainImage_2020).merge(trainImage_2022);
+
+// Split dataset into 80% training and 20% testing
+var trainingData = trainImage_allYears.randomColumn();
+var trainSet = trainingData.filter(ee.Filter.lessThan('random', 0.8));
+var testSet = trainingData.filter(ee.Filter.greaterThanOrEquals('random',0.8));
+
+// Classification Model (Random Forest)
+var classifier = ee.Classifier.smileRandomForest(500).train(trainSet,label,bands); // in () number of trees
+
+// ===================================================================
+// Assess classification accuracy
+// ===================================================================
+
+// Classify the test set
+var testSet_classified = testSet.classify(classifier);
+
+// Compute the testing confusion matrix
+var confusionMatrix_test = testSet_classified.errorMatrix(label, 'classification');
+print('Testing Confusion Matrix:', confusionMatrix_test);
+print('Testing Overall Accuracy:', confusionMatrix_test.accuracy());
+print('Testing Kappa:', confusionMatrix_test.kappa());
+
+// ===================================================================
+// Apply classifier to all years to get annual vegetation type composites
+// ===================================================================
+for (var i = 1984; i < 2025; i++) {
+var year = i;
+var filename = year;
+
+//declare time frame of composite
+var start_date = year + '-06-01';
+var end_date= year + '-09-30';
+
+var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL8sr);
+var l5 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+var l7 = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2').filterBounds(outline).filterDate(start_date, end_date).map(maskL457sr);
+
+// Assign a common name to the sensor-specific bands.
+var LC8_BANDS = ['SR_B2',   'SR_B3',    'SR_B4',  'SR_B5',  'SR_B6',    'SR_B7',    'ST_B10']; //Landsat 8
+var LC7_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Landsat 7
+var LC5_BANDS = ['SR_B1',   'SR_B2',    'SR_B3',  'SR_B4',  'SR_B5',    'SR_B7',    'ST_B6']; //Llandsat 5
+var STD_NAMES = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'temp'];
+
+var l8 = ee.ImageCollection(l8).select(LC8_BANDS, STD_NAMES);// Landsat 8
+var l7 = ee.ImageCollection(l7).select(LC7_BANDS, STD_NAMES); //Landsat 7
+var l5 = ee.ImageCollection(l5).select(LC5_BANDS, STD_NAMES); //Landsat 5
+
+var landsat_coll = l5.merge(l7).merge(l8);
+
+var median = landsat_coll.median();
+
+var vizParams = {
+  bands: ['red', 'green', 'blue'],
+  min: 0,
+  max: 0.5,
+  gamma: [0.95, 1.1, 1]
+};
+
+var median = median.clip(outline);
+var image_toClassify = median;
+
+// Add topographic variables to median composite Landsat image that will be classified
+var dataset = ee.Image('USGS/SRTMGL1_003');
+var elevation = dataset.select('elevation');
+var slope = ee.Terrain.slope(elevation);
+var aspect = ee.Terrain.aspect(elevation);
+var image_toClassify = image_toClassify.addBands(elevation);
+var image_toClassify = image_toClassify.addBands(slope);
+var image_toClassify = image_toClassify.addBands(aspect);
+
+
+var classified = image_toClassify.classify(classifier);
+
+
+// ===================================================================
+// Export Processed Datasets to Google Drive as GeoTIFFs
+// ===================================================================
+
+Export.image.toDrive({
+image: classified,
+description: filename,
+scale: 30,
+region: outline, //specify region of classified image to be downloaded
+crs:'EPSG:3310',
+folder: 'Veg_classification_fires',
+maxPixels: 1e9,
+fileFormat: 'GeoTIFF'
+});
+}
+
+
+// ===================================================================
+// Optional: visualize outputs
+// ===================================================================
+
+//var landcoverPalette = [
+//  '#0e4f12',
+//  '#956733',
+//  '#a7b5a5',
+//  '#0940ca',
+//  '#d8bf58',
+//  '#6dcd2b',
+//  '#7b8d6a',
+//  '#e97451'];
+  
+
+  
+// Map.addLayer(classified, {palette: landcoverPalette, min:0, max:8},'classified image'); // max = (n classes) -1

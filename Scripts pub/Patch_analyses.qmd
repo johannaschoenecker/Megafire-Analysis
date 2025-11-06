@@ -4,7 +4,7 @@ Edited 15 October 2025
 
 This quarto document contains code to load and pre-process pixel-, fire- and patch-level data for megafires in the Sierra Nevada ecoregion which burned between 1985 and 2023.
 
-Different sections contain code to calculate/ analyse different landscape patch metrics
+Different sections contain code to calculate area weighted mean patch sizes (AWMPS) for each megafire/ burn severity class as well as the largest patch index (LPI) for each megafire/ burn severity class
 
 ##Packages
 
