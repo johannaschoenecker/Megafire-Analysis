@@ -2,6 +2,7 @@
 Data/
 Outputs/
 Figures/
+Scripts/
 *.tif
 *.tiff
 *.zip
