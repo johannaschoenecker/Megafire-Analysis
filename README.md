@@ -16,14 +16,16 @@ This project combines remote sensing and field data to analyze:
 - `Scripts pub/` — reproducible scripts for publication
 - `Scripts/` — local working scripts (ignored on GitHub)
 
-## How to reproduce
+## Data
 1. Open the `.Rproj` file in RStudio.
 2. Install required packages (see the first script in `Scripts pub/`).
 3. Run analyses step by step following the numbered scripts.
 
+## Scripts
+
 ## Author
 Johanna Schoenecker  
 University of Cambridge  
-📧 johanna.schoenecker@...  
+📧 jss84@cam.ac.uk 
 
 ---
