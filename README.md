@@ -1,7 +1,7 @@
 # Megafire Analysis
 
-This repository contains the R scripts and analyses for the project  
-**"Megafires in the temperate conifer forests of the Sierra Nevada mountains of California (1985–2020)"**.
+This repository contains the R scripts and google earth engine scripts (.txt) and analyses for the project  
+**"Conifer forest recovery is compromised by compact and large high severity burn patches within megafires"**.
 
 ## Overview
 This project combines remote sensing and field data to analyze:
@@ -9,17 +9,21 @@ This project combines remote sensing and field data to analyze:
 - Vegetation recovery and post-fire dynamics
 - Spatial relationships between burn severity, distance to unburned forest, and vegetation type
 
-## Repository structure
-- `Data/` — input data (not all synced to GitHub)
-- `Figures/` — generated plots and maps
-- `Outputs/` — model results and summaries
-- `Scripts pub/` — reproducible scripts for publication
-- `Scripts/` — local working scripts (ignored on GitHub)
+## Data required for analyses
 
-## Data
-1. Open the `.Rproj` file in RStudio.
-2. Install required packages (see the first script in `Scripts pub/`).
-3. Run analyses step by step following the numbered scripts.
+Calfire FRAP database- fire shapefiles
+Sierra Nevada region shapefile
+RdNBR rasters for each fire- 30m spatial resolution
+Vegetation classification training data
+
+
+## (Intermediate) outputs produced 
+
+Annual vegetation classification composites for the Sierra Nevada region- 30m spatial resolution
+Elevation, slope, aspect, topographic roughness index (TRI) & topographic position index (TPI) rasters- 30m spatial resolution
+Classified RdNBR rasters for each fire- 30m spatial resolution
+PRISM annual absolute composites (mean tmean, tmin, tmax, tdmean, vpdmin, vpdmax; sum ppt)- 2,000m spatial resolution
+PRISM annual anomalies (based on 30-year normal) - 2,000m spatial resolution
 
 ## Scripts
 
