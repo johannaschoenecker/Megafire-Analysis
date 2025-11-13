@@ -39,7 +39,7 @@ Each script will specify in its header its functionality, but a brief overview i
 
 | Script                                                                                                                               | Description                                                                                    |
 | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| [**Figures.qmd**](Scripts%20pub/Figures.R)                                                                                             | Creates all main and supplementary figures for the manuscript.                                 |
+| [**Figures.qmd**](Scripts%20pub/Figures.qmd)                                                                                             | Creates all main and supplementary figures for the manuscript.                                 |
 | [**Patch_analyses.R**](Scripts%20pub/Patch_analyses.R)                                                                               | Performs spatial analyses of burn patch characteristics and connectivity.                      |
 | [**patches_from_pixels.R**](Scripts%20pub/patches_from_pixels.R)                                                                     | Aggregates pixel-based classification results into contiguous patch objects.                   |
 | [**pixel_df_mega.R**](Scripts%20pub/pixel_df_mega.R)                                                                                 | Builds pixel-level data frames combining spectral, topographic, and climate variables.         |
