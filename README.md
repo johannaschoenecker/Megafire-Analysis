@@ -39,18 +39,18 @@ Each script will specify in its header its functionality, but a brief overview i
 
 | Script                                                                                                                               | Description                                                                                    |
 | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| [**Figures.qmd**](Scripts%20pub/Figures.qmd)                                                                                             | Creates all main and supplementary figures for the manuscript.                                 |
-| [**Patch_analyses.R**](Scripts%20pub/Patch_analyses.R)                                                                               | Performs spatial analyses of burn patch characteristics and connectivity.                      |
-| [**patches_from_pixels.R**](Scripts%20pub/patches_from_pixels.R)                                                                     | Aggregates pixel-based classification results into contiguous patch objects.                   |
-| [**pixel_df_mega.R**](Scripts%20pub/pixel_df_mega.R)                                                                                 | Builds pixel-level data frames combining spectral, topographic, and climate variables.         |
-| [**predictions_returned_RF_class_reburns_plantings.R**](Scripts%20pub/predictions_returned_RF_class_reburns_plantings.R)             | Generates random forest predictions for vegetation class recovery after reburns and plantings. |
-| [**reclassify_RdNBR.R**](Scripts%20pub/reclassify_RdNBR.R)                                                                           | Reclassifies RdNBR (Relativized Burn Ratio) values into standardized severity categories.      |
-| [**RF_classification_weighted_returned_repeated_planting.R**](Scripts%20pub/RF_classification_weighted_returned_repeated_planting.R) | Trains and evaluates a weighted random forest for repeated planting and vegetation recovery.   |
-| [**PRISM_annual_GEE.txt**](Scripts%20pub/PRISM_annual_GEE.txt)                                                                       | Google Earth Engine (GEE) export: annual PRISM climate data collection.                        |
-| [**PRISM_anomalies_GEE.txt**](Scripts%20pub/PRISM_anomalies_GEE.txt)                                                                 | GEE script computing climate anomalies relative to long-term PRISM averages.                   |
 | [**RdNBR_calculations_GEE.txt**](Scripts%20pub/RdNBR_calculations_GEE.txt)                                                           | GEE script calculating Relativized Burn Ratio (RdNBR) from satellite composites.               |
+| [**reclassify_RdNBR.R**](Scripts%20pub/reclassify_RdNBR.R)                                                                           | Reclassifies RdNBR (Relativized Burn Ratio) values into standardized severity categories.      |
 | [**RF_veg_classification_GEE.txt**](Scripts%20pub/RF_veg_classification_GEE.txt)                                                     | GEE-based random forest vegetation classification workflow.                                    |
 | [**Topography_e_s_a_GEE.txt**](Scripts%20pub/Topography_e_s_a_GEE.txt)                                                               | GEE script extracting elevation, slope, and aspect layers from DEM data.                       |
+| [**PRISM_annual_GEE.txt**](Scripts%20pub/PRISM_annual_GEE.txt)                                                                       | Google Earth Engine (GEE) export: annual PRISM climate data collection.                        |
+| [**PRISM_anomalies_GEE.txt**](Scripts%20pub/PRISM_anomalies_GEE.txt)                                                                 | GEE script computing climate anomalies relative to long-term PRISM averages.                   |
+| [**pixel_df_mega.R**](Scripts%20pub/pixel_df_mega.R)                                                                                 | Builds pixel-level data frames combining spectral, topographic, and climate variables.         |
+| [**patches_from_pixels.R**](Scripts%20pub/patches_from_pixels.R)                                                                     | Aggregates pixel-based classification results into contiguous patch objects.                   |
+| [**Patch_analyses.R**](Scripts%20pub/Patch_analyses.R)                                                                               | Performs spatial analyses of burn patch characteristics and connectivity.                      |
+| [**RF_classification_weighted_returned_repeated_planting.R**](Scripts%20pub/RF_classification_weighted_returned_repeated_planting.R) | Trains and evaluates a weighted random forest for repeated planting and vegetation recovery.   |
+| [**predictions_returned_RF_class_reburns_plantings.R**](Scripts%20pub/predictions_returned_RF_class_reburns_plantings.R)             | Generates random forest predictions for vegetation class recovery after reburns and plantings. |
+| [**Figures.qmd**](Scripts%20pub/Figures.qmd)                                                                                             | Quarto file that creates all main and supplementary figures for the manuscript, based on the prior compilation of data and analyses                                 |
 
 
 
