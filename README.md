@@ -15,11 +15,11 @@ This project combines remote sensing and field data to analyze:
 All data used in this project were acquired from public sources and where processing was conducted,
 the scripts are provided along with analysis scripts in the 'Scripts pub' folder. 
 
-Calfire FRAP database- fire shapefiles obtained as geodatabase from https://www.fire.ca.gov/what-we-do/fire-resource-assessment-program/fire-perimeters
+Fire perimeter database- fire shapefiles obtained as geodatabase from the [Calfire FRAP website](https://www.fire.ca.gov/what-we-do/fire-resource-assessment-program/fire-perimeters)
 
-Sierra Nevada region shapefile obtained from https://gis.data.ca.gov/datasets/2b40b375176f411e8cc829cc1efcca9d_0/explore?location=38.405092%2C-120.319169%2C6.92
+Sierra Nevada region shapefile obtained from the [California State Geoportal](https://gis.data.ca.gov/datasets/2b40b375176f411e8cc829cc1efcca9d_0/explore?location=38.405092%2C-120.319169%2C6.92)
 
-Vegetation classification training data: this is produced from 750 vegetation points from the years 2016, 2018, 2020 and 2022, which are randomly selected points on a 1km grid that were created in QGIS and imported into google earth engine and then manually assigned a vegetation class after inspecting NAIP imagery for the respective year. 
+Vegetation classification training data: this was produced from 750 vegetation points from the years 2016, 2018, 2020 and 2022, which are randomly selected points on a 1km grid that were created in QGIS and imported into google earth engine and then manually assigned a vegetation class after inspecting NAIP imagery for the respective year. 
 
 ## (Intermediate) outputs produced 
 
