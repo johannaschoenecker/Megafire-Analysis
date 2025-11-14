@@ -41,7 +41,7 @@ Each script will specify in its header its functionality, but a brief overview i
 | [**RF_classification_weighted_returned_repeated_planting.R**](Scripts%20pub/RF_classification_weighted_returned_repeated_planting.R) | Trains and evaluates a weighted random forest for repeated planting and vegetation recovery.                         | Fitted model objects; variable importance plots; accuracy summaries.                                        |
 | [**predictions_returned_RF_class_reburns_plantings.R**](Scripts%20pub/predictions_returned_RF_class_reburns_plantings.R)             | Generates random forest predictions for vegetation recovery after reburns and plantings.                             | Prediction rasters or data frames; post-fire vegetation class probabilities.                                |
 | [**Figures.qmd**](Scripts%20pub/Figures.qmd)                                                                                         | Quarto document creating all main and supplementary figures for the manuscript, based on compiled data and analyses. | Publication-quality figures and summary tables.                                               |
-                          |
+                          
 
 
 ## (Intermediate) outputs produced 
