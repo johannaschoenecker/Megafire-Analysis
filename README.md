@@ -23,6 +23,27 @@ Sierra Nevada region shapefile obtained from the [California State Geoportal](ht
 
 Vegetation classification training data: this was produced from 750 vegetation points from the years 2016, 2018, 2020 and 2022, which are randomly selected points on a 1km grid that were created in QGIS and imported into google earth engine and then manually assigned a vegetation class after inspecting NAIP imagery for the respective year. 
 
+## Scripts
+All scripts for data processing and analysis can be found in the 'Scripts pub' folder.
+Each script will specify in its header its functionality, but a brief overview is given here:
+
+| Script                                                                                                                               | Description                                                                                                          | Outputs                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [**RdNBR_calculations_GEE.txt**](Scripts%20pub/RdNBR_calculations_GEE.txt)                                                           | GEE script calculating Relativized Burn Ratio (RdNBR) from satellite composites.                                     | RdNBR burn severity images (.tif) for each fire, exported to Google Drive |
+| [**reclassify_RdNBR.R**](Scripts%20pub/reclassify_RdNBR.R)                                                                           | Reclassifies RdNBR values into standardized burn-severity categories.                       | Categorical burn severity raster images for each fire (low / moderate / high severity)                   |
+| [**RF_veg_classification_GEE.txt**](Scripts%20pub/RF_veg_classification_GEE.txt)                                                     | GEE-based random forest vegetation classification workflow.                                                          | Annual (1984-2024) vegetation classification maps for Sierra Nevada region exported to Google Drive; accuracy assessment tables.                                                 |
+| [**Topography_e_s_a_GEE.txt**](Scripts%20pub/Topography_e_s_a_GEE.txt)                                                               | GEE script calculating elevation, slope, and aspect layers from DEM data.                                             | Topographic variable rasters exported to Google Drive.                                                      |
+| [**PRISM_annual_GEE.txt**](Scripts%20pub/PRISM_annual_GEE.txt)                                                                       | GEE export of annual PRISM climate data (temperature, precipitation).                                                | Annual climate raster images at 2,000m spatial resolution (mean annual values for tmax, tmin,tmean, tdmean, vpdmax,vpdmin; cumulative annual ppt) for study years, exported to Google Drive.                                                   |
+| [**PRISM_anomalies_GEE.txt**](Scripts%20pub/PRISM_anomalies_GEE.txt)                                                                 | Computes PRISM climate anomalies relative to 30-year averages.                                                       | Annual climate anomaly raster images at 2,000m spatial resolution (mean annual values for tmax, tmin,tmean, tdmean, vpdmax,vpdmin; cumulative annual ppt) for study years, exported to Google Drive.                                       |
+| [**pixel_df_mega.R**](Scripts%20pub/pixel_df_mega.R)                                                                                 | Builds pixel-level data frames combining spectral, topographic, and climate variables.                               | Large `.CSV` datasets of per-pixel attributes for each fire.                                 |
+| [**patches_from_pixels.R**](Scripts%20pub/patches_from_pixels.R)                                                                     | Aggregates pixel-based classifications into contiguous patch objects.                                                | Patch-level data frames with summary statistics (size, mean severity, etc.).                                |
+| [**Patch_analyses.R**](Scripts%20pub/Patch_analyses.R)                                                                               | Performs spatial analyses of burn patch characteristics and connectivity.                                            | Patch metrics tables; connectivity and fragmentation indices.                                               |
+| [**RF_classification_weighted_returned_repeated_planting.R**](Scripts%20pub/RF_classification_weighted_returned_repeated_planting.R) | Trains and evaluates a weighted random forest for repeated planting and vegetation recovery.                         | Fitted model objects; variable importance plots; accuracy summaries.                                        |
+| [**predictions_returned_RF_class_reburns_plantings.R**](Scripts%20pub/predictions_returned_RF_class_reburns_plantings.R)             | Generates random forest predictions for vegetation recovery after reburns and plantings.                             | Prediction rasters or data frames; post-fire vegetation class probabilities.                                |
+| [**Figures.qmd**](Scripts%20pub/Figures.qmd)                                                                                         | Quarto document creating all main and supplementary figures for the manuscript, based on compiled data and analyses. | Publication-quality figures and summary tables.                                               |
+                          |
+
+
 ## (Intermediate) outputs produced 
 
 RdNBR rasters for each fire- 30m spatial resolution
@@ -33,27 +54,6 @@ Classified RdNBR rasters for each fire- 30m spatial resolution
 PRISM annual absolute composites (mean tmean, tmin, tmax, tdmean, vpdmin, vpdmax; sum ppt)- 2,000m spatial resolution
 PRISM annual anomalies (based on 30-year normal) - 2,000m spatial resolution
 
-## Scripts
-All scripts for data processing and analysis can be found in the 'Scripts pub' folder.
-Each script will specify in its header its functionality, but a brief overview is given here:
-
-| Script                                                                                                                               | Description                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| [**RdNBR_calculations_GEE.txt**](Scripts%20pub/RdNBR_calculations_GEE.txt)                                                           | GEE script calculating Relativized Burn Ratio (RdNBR) from satellite composites.               |
-| [**reclassify_RdNBR.R**](Scripts%20pub/reclassify_RdNBR.R)                                                                           | Reclassifies RdNBR (Relativized Burn Ratio) values into standardized severity categories.      |
-| [**RF_veg_classification_GEE.txt**](Scripts%20pub/RF_veg_classification_GEE.txt)                                                     | GEE-based random forest vegetation classification workflow.                                    |
-| [**Topography_e_s_a_GEE.txt**](Scripts%20pub/Topography_e_s_a_GEE.txt)                                                               | GEE script extracting elevation, slope, and aspect layers from DEM data.                       |
-| [**PRISM_annual_GEE.txt**](Scripts%20pub/PRISM_annual_GEE.txt)                                                                       | Google Earth Engine (GEE) export: annual PRISM climate data collection.                        |
-| [**PRISM_anomalies_GEE.txt**](Scripts%20pub/PRISM_anomalies_GEE.txt)                                                                 | GEE script computing climate anomalies relative to long-term PRISM averages.                   |
-| [**pixel_df_mega.R**](Scripts%20pub/pixel_df_mega.R)                                                                                 | Builds pixel-level data frames combining spectral, topographic, and climate variables.         |
-| [**patches_from_pixels.R**](Scripts%20pub/patches_from_pixels.R)                                                                     | Aggregates pixel-based classification results into contiguous patch objects.                   |
-| [**Patch_analyses.R**](Scripts%20pub/Patch_analyses.R)                                                                               | Performs spatial analyses of burn patch characteristics and connectivity.                      |
-| [**RF_classification_weighted_returned_repeated_planting.R**](Scripts%20pub/RF_classification_weighted_returned_repeated_planting.R) | Trains and evaluates a weighted random forest for repeated planting and vegetation recovery.   |
-| [**predictions_returned_RF_class_reburns_plantings.R**](Scripts%20pub/predictions_returned_RF_class_reburns_plantings.R)             | Generates random forest predictions for vegetation class recovery after reburns and plantings. |
-| [**Figures.qmd**](Scripts%20pub/Figures.qmd)                                                                                             | Quarto file that creates all main and supplementary figures for the manuscript, based on the prior compilation of data and analyses                                 |
-
-
-
 ## Author
 Johanna Schoenecker  
 University of Cambridge  
@@ -62,12 +62,11 @@ University of Cambridge
 
 ## License
 
-This repository is released under the MIT License
-
-You are free to use, modify, and distribute the code for any purpose, provided that proper credit is given and the same license text is included in any redistributions.
+This repository is released under the MIT License.You are free to use, modify, and distribute the code for any purpose, provided that proper credit is given and the same license text is included in any redistributions.
 See the LICENSE file for full details.
 
 ## Citation
 
-If you use this code or analyses in your work, please cite the publication.
+If you use this code or analyses in your work, please cite the parent publication.
+
 ---
