@@ -220,6 +220,49 @@ figure_1 <- plot_grid(
 
 print(figure_1)
 
+
+
+
+#### Save all combinations to folder
+
+ggsave(
+  filename  = paste0(here(),"/Figures/plot_1a.emf"),
+  plot      = plot_1a,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_1a.pdf"),
+  plot     = plot_1a,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_1b.emf"),
+  plot      = plot_1b,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_1b.pdf"),
+  plot     = plot_1b,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
 ```
 
 # Figure 2a- Patch area/ size (cumulative)
@@ -373,6 +416,25 @@ figure_2a <- ggplot(patch_summary, aes(x = as.factor(n_bins), y = total_area, fi
 
 print(figure_2a)
 
+
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_2a.emf"),
+  plot      = figure_2a,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_2a.pdf"),
+  plot     = figure_2a,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 ```
 
 # Figure S3- Patch area/ size high sev (cumulative)
@@ -526,6 +588,25 @@ figure_S3 <- ggplot(patch_summary, aes(x = as.factor(n_bins), y = total_area, fi
 
 print(figure_S3)
 
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_S3.emf"),
+  plot      = figure_S3,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_S3.pdf"),
+  plot     = figure_S3,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
 ```
 
 # Figure 3- Patch characteristics
@@ -609,9 +690,9 @@ plot_core_area <- ggplot2::ggplot(
   core_area_burned,
   ggplot2::aes(x = n_bins, y = core_area_sum, fill = rdnbr_class)
 ) +
-  ggplot2::geom_boxplot(alpha = 0.5) +
+  ggplot2::geom_boxplot(alpha = 1) +
   ggplot2::scale_fill_manual(values = rdnbr_colors_named) +
-  ggplot2::labs(x = "Patch size class", y = "Core area within patch (ha)") +
+  ggplot2::labs(x = "Patch size class", y = "Core area \nw/in patch (ha)") +
   ggplot2::coord_cartesian(ylim = c(0, 7500)) +
   ggplot2::scale_y_continuous(labels = scales::comma) +
   box_theme
@@ -620,7 +701,7 @@ plot_paratio <- ggplot2::ggplot(
   paratio_burned,
   ggplot2::aes(x = n_bins, y = perimeter_area_mean, fill = rdnbr_class)
 ) +
-  ggplot2::geom_boxplot(alpha = 0.5) +
+  ggplot2::geom_boxplot(alpha = 1) +
   ggplot2::scale_fill_manual(values = rdnbr_colors_named) +
   ggplot2::labs(x = "Patch size class", y = "Perimeter:area") +
   box_theme
@@ -629,7 +710,7 @@ plot_contiguity <- ggplot2::ggplot(
   contiguity_burned,
   ggplot2::aes(x = n_bins, y = contiguity_mean, fill = rdnbr_class)
 ) +
-  ggplot2::geom_boxplot(alpha = 0.5) +
+  ggplot2::geom_boxplot(alpha = 1) +
   ggplot2::scale_fill_manual(values = rdnbr_colors_named) +
   ggplot2::labs(x = "Patch size class", y = "Contiguity") +
   box_theme
@@ -664,7 +745,7 @@ lineplot_core_area <- ggplot2::ggplot(
   ggplot2::geom_point(size = 2.5, alpha = 0.7) +
   ggplot2::geom_smooth(method = "gam", se = TRUE, alpha = 0.2) +
   ggplot2::scale_color_manual(values = rdnbr_colors) +
-  ggplot2::labs(y = "Mean core area within patch (ha)", x = "Fire year") +
+  ggplot2::labs(y = "Mean core area w/in patch (ha)", x = "Fire year") +
   line_theme
 
 lineplot_paratio <- ggplot2::ggplot(
@@ -690,22 +771,56 @@ lineplot_contiguity <- ggplot2::ggplot(
 # -------------------------------------------------------------------
 # Combine plots
 # -------------------------------------------------------------------
+
+# Decrease x-axis label text
+plot_paratio <- plot_paratio +
+  theme(axis.text.x = element_text(size = 8))
+
+plot_contiguity <- plot_contiguity +
+  theme(axis.text.x = element_text(size = 8))
+
+plot_core_area <- plot_core_area +
+  theme(axis.text.x = element_text(size = 8))
+
+# Make plots more square
+plot_paratio    <- plot_paratio    + theme(aspect.ratio = 0.8)
+plot_contiguity <- plot_contiguity + theme(aspect.ratio = 0.8)
+plot_core_area  <- plot_core_area  + theme(aspect.ratio = 0.8)
+
+
+all_levels <- c("small", "medium", "large", "very large")  # whatever your bins are
+
+paratio_burned$n_bins        <- factor(paratio_burned$n_bins,        levels = all_levels)
+contiguity_burned$n_bins     <- factor(contiguity_burned$n_bins,     levels = all_levels)
+core_area_burned$n_bins    <- factor(core_area_burned$n_bins,    levels = all_levels)
+
+sx <- ggplot2::scale_x_discrete(drop = FALSE)
+
+plot_paratio    <- plot_paratio    + sx
+plot_contiguity <- plot_contiguity + sx
+plot_core_area  <- plot_core_area  + sx
+
+
+
 # Top row (boxplots)
+
 top_combined <- cowplot::plot_grid(
   plot_paratio     + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
   plot_contiguity  + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
   plot_core_area   + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
-  labels    = c("A", "B", "C"),
-  label_size = 20,
-  ncol      = 3
+  ncol       = 3,
+  rel_widths = c(1.2, 1.2, 1.2)
 )
+
+
 
 # Bottom row (time trends)
 bottom_combined <- cowplot::plot_grid(
   lineplot_paratio     + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
   lineplot_contiguity  + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
   lineplot_core_area   + ggplot2::theme(axis.title.x = ggplot2::element_blank()),
-  labels = c("A", "B", "C"),
+  labels = c("(a)", "(b)", "(c)"),
+  label_size = 12,
   ncol   = 3
 )
 
@@ -715,6 +830,7 @@ top_labeled <- cowplot::plot_grid(
   grid::textGrob("Patch size class", gp = grid::gpar(fontsize = 20)),
   ncol = 1, rel_heights = c(1, 0.05)
 )
+
 
 bottom_labeled <- cowplot::plot_grid(
   bottom_combined,
@@ -770,6 +886,56 @@ ggplot2::ggsave(
 )
 
 
+# Save only patch metrics plots
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_3.emf"),
+  plot      = top_labeled,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_3.pdf"),
+  plot     = top_labeled,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
+
+# Save core area as pdf
+
+plot_core_area <- ggplot2::ggplot(
+  core_area_burned,
+  ggplot2::aes(x = n_bins, y = core_area_sum, fill = rdnbr_class)
+) +
+  ggplot2::geom_boxplot(alpha = 1) +
+  ggplot2::scale_fill_manual(
+    values = rdnbr_colors_named,
+    name   = "Burn severity"
+  ) +
+  ggplot2::labs(
+    x = "Patch size class",
+    y = "Core area \nw/in patch (ha)"
+  ) +
+  ggplot2::coord_cartesian(ylim = c(0, 7500)) +
+  ggplot2::scale_y_continuous(labels = scales::comma) +
+  box_theme +
+  ggplot2::theme(legend.position = "bottom")
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_3c.pdf"),
+  plot     = plot_core_area,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 ```
 
 #Table S5- Patch metrics summary
@@ -1082,7 +1248,56 @@ plot_4a <- ggplot(df_stacked) +
     legend.position = "none"
   )
 
+plot_4a_legend <- ggplot(df_stacked) +
+  geom_rect(
+    aes(
+      xmin = as.numeric(factor(rdnbr_class)) - 0.4,
+      xmax = as.numeric(factor(rdnbr_class)) + 0.4,
+      ymin = ymin,
+      ymax = ymax,
+      fill = recovery_status
+    ),
+    color = "black", linewidth = 0.3
+  ) +
+  scale_fill_manual(values = custom_colors, labels = recovery_labels) +
+  scale_x_continuous(
+    breaks = 1:4,
+    labels = c("unchanged", "low", "moderate", "high")
+  ) +
+  labs(
+    x = "Burn severity class",
+    y = "Area (1,000 ha)",
+    fill = "Recovery category",
+    title = NULL
+  ) +
+  theme_classic() +
+  theme(
+    axis.title   = element_text(size = 14),
+    axis.text    = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text  = element_text(size = 11),
+    legend.position = "right"
+  )
 
+
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_4a_legend.emf"),
+  plot      = plot_4a_legend,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_4a_legend.pdf"),
+  plot     = plot_4a_legend,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 
 
 ```
@@ -1155,6 +1370,24 @@ plot_4b <- ggplot(patch_recovery_df, aes(x = patch_size_class, y = prop_returned
     legend.position = "none"
   )
 
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_4b.emf"),
+  plot      = plot_4b,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_4b.pdf"),
+  plot     = plot_4b,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 
 ```
 
@@ -1226,6 +1459,25 @@ plot_4b <- ggplot(patch_recovery_df, aes(x = patch_size_class, y = prop_returned
     legend.position = "none"
   )
 
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_4b.emf"),
+  plot      = plot_4b,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_4b.pdf"),
+  plot     = plot_4b,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
 
 ```
 
@@ -1270,7 +1522,7 @@ veg_labels <- c(
   '9' = "Dense woodland"
 )
 
-ggplot(veg_counts_master, aes(x = rdnbr, fill = RF_pre_veg)) +
+plot_S6 <- ggplot(veg_counts_master, aes(x = rdnbr, fill = RF_pre_veg)) +
     geom_histogram(position = "identity", bins = 100, alpha = 0.9) +
     xlim(c(-1000, 2000)) +
     xlab("Mean burn severity [RdNBR]") +
@@ -1280,7 +1532,24 @@ ggplot(veg_counts_master, aes(x = rdnbr, fill = RF_pre_veg)) +
     theme(legend.position = "none")+
   facet_wrap(~RF_pre_veg, labeller = labeller(RF_pre_veg = veg_labels))
 
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_S6.emf"),
+  plot      = plot_S6,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
 
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_S6.pdf"),
+  plot     = plot_S6,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 
 ### For individual fires only- set fire ID
 # Histograms by veg type
@@ -1447,6 +1716,7 @@ print(final_plot)
 
 
 # Figure 6- Recovery predictions including (excluding) reburns and plantings
+
 
 ```{r figure-6-recovery-predictions-including-excluding-reburns-and-plantings-chunk1}
 ### Model considering reburns within 20 years ###
@@ -1689,15 +1959,18 @@ print(bars_recovered)
 class_counts_noreturn <- class_counts %>%
   filter(returned == 0)
 
-ggplot(class_counts_noreturn, aes(x = fire_year, y = count)) +
+scatter_noreturn <- ggplot(class_counts_noreturn, aes(x = fire_year, y = count)) +
   geom_point(size = 3, alpha = 0.8, color = "black") +  # Scatter plot
   geom_smooth(method = "gam", formula = y ~ s(x), color = "black", se = TRUE) +  # ← GAM here
   labs(
     title = "",
     x = "Fire year",
-    y = "Area not recovered"
+    y = "Coniferous burned area not recovered within 20 years (ha)"
   ) +
-  ylim(c(0, 150000)) +
+  scale_y_continuous(
+    limits = c(0, 150000),
+    labels = comma               # ← thousand separators!
+  ) +
   theme_classic() +
   theme(
     text = element_text(size = 12),
@@ -1757,7 +2030,136 @@ rec <- sum(class_counts_wide$recovered, na.rm = TRUE)
 total <- trans+rec
 
 trans/total
+
+# Write plots to file
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_6b.emf"),
+  plot      = scatter_noreturn,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_6b.pdf"),
+  plot     = scatter_noreturn,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
+
+
+
+# Barplot only, no cumulative curves
+library(ggplot2)
+library(scales)
+
+# Compute a small negative offset to place labels below zero
+y_offset <- -0.05 * max(class_counts$area, na.rm = TRUE)
+
+bars_recovered <- ggplot(
+  class_counts,
+  aes(x = fire_year, y = area,
+      fill = factor(returned), alpha = type)
+) +
+  geom_bar(stat = "identity", position = "dodge") +
+
+  # --- Add segment for OBSERVED ---
+  annotate("segment",
+           x = 1985, xend = 2002.5,
+           y = y_offset, yend = y_offset,
+           size = 1) +
+  annotate("text",
+           x = (1985 + 2002.5) / 2,
+           y = y_offset - 0.02 * max(class_counts$area),
+           label = "observed",
+           size = 4) +
+
+  # --- Add segment for PREDICTED ---
+  annotate("segment",
+           x = 2003, xend = 2023,
+           y = y_offset, yend = y_offset,
+           size = 1) +
+  annotate("text",
+           x = (2003 + 2023) / 2,
+           y = y_offset - 0.02 * max(class_counts$area),
+           label = "predicted",
+           size = 4) +
+
+  scale_fill_manual(
+    values = c("0" = "#737373", "1" = "#2D7A2D"),
+    labels = c("not recovered", "recovered"),
+    name   = "20-year recovery status"
+  ) +
+  scale_alpha_manual(
+    values = c(measured = 1, predicted = 0.7),
+    guide  = "none"
+  ) +
+
+  # Y-axis: bars start exactly at 0
+  scale_y_continuous(
+    expand = c(0, 0),
+    labels = comma,
+    name   = "High-severity coniferous area (ha)",
+    limits = c(y_offset - 0.05 * max(class_counts$area), NA)
+  ) +
+
+  # X-axis
+  labs(x = "Fire year") +
+
+  theme_classic() +
+  theme(
+    axis.title       = element_text(size = 14, color = "black"),
+    axis.text        = element_text(size = 11, color = "black"),
+    legend.position  = "top",
+    legend.title     = element_text(size = 11, face = "bold"),
+    legend.text      = element_text(size = 10)
+  )
+
+bars_recovered <- bars_recovered +
+  theme(
+    legend.position   = c(0.02, 0.98),        # top-left inside plot
+    legend.justification = c(0, 1),           # align top-left corner of legend
+    legend.background = element_rect(
+      fill = alpha("white", 0.7),             # semi-transparent background
+      color = NA
+    )
+  )
+
+
+bars_recovered
+
+# Write plots to file
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_6.emf"),
+  plot      = bars_recovered,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_6.pdf"),
+  plot     = bars_recovered,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
+
+
+
 ```
+
+
+
 
 
 #Figure 2 Cumulative core area and example map KNP
@@ -1853,6 +2255,8 @@ map_plot_updated <- ggplot() +
     legend.position = "none"
   )
 
+plot_2b <- map_plot_updated
+
 # (B) Core vs. Non-core Map
 core_plot <- ggplot(core_df, aes(x = x, y = y, fill = burn_type)) +
   geom_tile() +
@@ -1875,6 +2279,8 @@ core_plot <- ggplot(core_df, aes(x = x, y = y, fill = burn_type)) +
     legend.position = "none"
   )
 
+
+plot_2c <- core_plot
 # --------------------
 # Combine and Stack Maps with Bar Plot
 # --------------------
@@ -1902,6 +2308,47 @@ final_layout <- plot_grid(
 
 # Display full figure
 print(final_layout)
+
+
+
+
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_2b.emf"),
+  plot      = plot_2b,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_2b.pdf"),
+  plot     = plot_2b,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_2c.emf"),
+  plot      = plot_2c,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_2c.pdf"),
+  plot     = plot_2c,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 ```
 
 # Fig 4c Including plantings/ reburns
@@ -2013,9 +2460,58 @@ plot_none <- ggplot(marginal_data, aes(x = patch_size_class, y = total_abs_notRe
     legend.position = "none"
   )
 
-# Show plot
-print(plot_none)
+# Same plot, including a legend
+plot_none <- ggplot(marginal_data, 
+                    aes(x = patch_size_class, 
+                        y = total_abs_notRecov_thousand_ha, 
+                        fill = factor(rdnbr_class))) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 1) +
+  scale_fill_manual(
+    values = c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154"),
+    name = "Burn severity",
+    labels = c("1" = "low", "2" = "moderate", "3" = "high")
+  ) +
+  labs(
+    x = "Patch size class",
+    y = "Area not recovered \nw/in 20 yrs (1,000 ha)",
+    title = ""
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text  = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text  = element_text(size = 11),
+
+    # ---- Legend in top-left corner ----
+    legend.position       = c(0.02, 0.98),
+    legend.justification  = c(0, 1),
+    legend.background     = element_rect(fill = alpha("white", 0.7), color = NA)
+  )
+
+
+# Save plot to file 
 plot_3 <- plot_none
+
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/plot_4c.emf"),
+  plot      = plot_3,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 3, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/plot_4c.pdf"),
+  plot     = plot_3,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 3, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 
 ```
 
@@ -2030,7 +2526,7 @@ library(stringr)
 fire_IDs <- c(10495,10498,10504,10273,10094,9714,9724,9487,8985,
               9039,8747,8026,7996,7961,7808,7747,7514,7412,7242)
 
-csv_dir <- "C:/Users/jscho/Documents/Megafires-1985-2023-Data/raster_df_mega_repeated_planting"
+csv_dir <- paste0(here(),"/Data/raster_df_mega_repeated_planting")
 csv_files <- list.files(csv_dir, pattern = "\\.csv$", full.names = TRUE)
 csv_files <- csv_files[basename(csv_files) %in% paste0(fire_IDs, ".csv")]
 
@@ -2078,14 +2574,14 @@ for (file in csv_files) {
 all_pixels <- rbindlist(pixel_data_list, fill = TRUE)
 
 # Keep only valid patch sizes and burn severity
-all_pixels <- all_pixels[!is.na(patch_size_class) & !is.na(rdnbr_class) & rdnbr_class > 0]
+all_pixels <- all_pixels[!is.na(patch_size_class) & !is.na(rdnbr_class.x) & rdnbr_class.x > 0]
 
 # Filter to unplanted and unreburned only
 plot_data <- all_pixels[pixel_status == "none"]
 
 # Summarize area not recovered within 20 years
 marginal_data <- plot_data %>%
-  group_by(patch_size_class, rdnbr_class) %>%
+  group_by(patch_size_class, rdnbr_class.x) %>%
   summarise(
     total_abs_notRecov = sum(abs_not_recovered, na.rm = TRUE),
     .groups = "drop"
@@ -2096,7 +2592,7 @@ marginal_data <- plot_data %>%
   )
 
 # Plot
-plot_none <- ggplot(marginal_data, aes(x = patch_size_class, y = total_abs_notRecov_thousand_ha, fill = factor(rdnbr_class))) +
+plot_none <- ggplot(marginal_data, aes(x = patch_size_class, y = total_abs_notRecov_thousand_ha, fill = factor(rdnbr_class.x))) +
   geom_bar(stat = "identity", position = "dodge", alpha = 0.7) +
   scale_fill_manual(
     values = c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154"),
@@ -2317,7 +2813,7 @@ TukeyHSD(anova_interaction)
 marginal_data$total_abs_con_notRecov_thousand_ha <- marginal_data$total_abs_con_notRecov_ha/ 1000
 
 plot_3 <- ggplot(marginal_data, aes(x = n_bins_rdnbr, y = total_abs_con_notRecov_thousand_ha, fill = severity)) +
-  geom_bar(stat = "identity", alpha = 0.3) +
+  geom_bar(stat = "identity", alpha = 1) +
   scale_fill_manual(values = c("1" = "#F6BE00", "2" = "#21918c", "3" = "#440154")) +
   labs(
     x = "",
@@ -2445,6 +2941,18 @@ data_path <- paste0(here(),"/Data/raster_df_mega")
 # Color palette
 veg_colors <- c('1' = '#956733', '2' = '#a7b5a5', '3' = '#0940ca', '4' = '#d8bf58', '5' = '#6dcd2b', '6' = '#ffacc9', '7' = '#0e4f12', '8' = '#7b8d6a', '9' = '#e97451')
 
+veg_labels <- c(
+  '1' = "Shrub",
+  '2' = "Rock",
+  '3' = "Water",
+  '4' = "Open woodland",
+  '5' = "Herbaceous",
+  '6' = "Bare soil",
+  '7' = "Conifer",
+  '8' = "Sage brush",
+  '9' = "Dense woodland"
+)
+
 # Loop over each patch
 for (i in 1:nrow(patch_summary_df)) {
   
@@ -2487,21 +2995,50 @@ veg_colors_ordered <- veg_colors[used_levels]
 
 p <- ggplot(veg_long, aes(x = rel_year, y = count, fill = veg_class)) +
   geom_bar(stat = "identity", position = "stack", width = 0.7) +
-  scale_fill_manual(values = veg_colors_ordered, drop = FALSE, na.translate = FALSE) +
+
+  # --- add vertical red line + label ---
+  geom_vline(xintercept = 0.5, color = "red", linewidth = 1) +
+  annotate("text", x = 0.5, y = max(veg_long$count)*1.10,
+           label = "fire", color = "red", angle = 90, vjust = -0.5,
+           size = 4.5) +
+  # -------------------------------------
+
+  scale_fill_manual(
+    values = veg_colors_ordered,
+    labels = veg_labels,
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
   labs(
-    title = paste("Vegetation Change - Fire", fire_id, "Patch", patch_id),
-    x = "Years Since Fire (0 = Pre-fire)",
-    y = "Pixel Count",
-    fill = "Vegetation Class"
+    title = paste("Vegetation change - fire", fire_id, "patch", patch_id),
+    x = "Years since fire (0 = Pre-fire)",
+    y = "Pixel count",
+    fill = "Vegetation class"
   ) +
   theme_classic(base_size = 12)
 
+
+ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/Patches/",fire_id, "_patch", patch_id, ".emf"),
+  plot      = p,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+  width     = 8.27, height = 4.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/Patches/",fire_id, "_patch", patch_id, ".pdf"),
+  plot     = p,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
+
 }
   
-  # Save
- # out_file <- paste0("C:/Users/jscho/Documents/Megafires-1985-2023-Data/patch_veg/veg_trajectory_fire", fire_id, "_patch", patch_id, ".png")
-#  ggsave(out_file, plot = p, width = 8, height = 5, dpi = 300)
-#}
 
 ```
 
@@ -2518,6 +3055,18 @@ library(fs)
 data_path <- paste0(here(),"/Data/raster_df_mega")
 
 veg_colors <- c('1' = '#956733', '2' = '#a7b5a5', '3' = '#0940ca', '4' = '#d8bf58', '5' = '#6dcd2b', '6' = '#ffacc9', '7' = '#0e4f12', '8' = '#7b8d6a', '9' = '#e97451')
+
+veg_labels <- c(
+  '1' = "Shrub",
+  '2' = "Rock",
+  '3' = "Water",
+  '4' = "Open woodland",
+  '5' = "Herbaceous",
+  '6' = "Bare soil",
+  '7' = "Conifer",
+  '8' = "Sage brush",
+  '9' = "Dense woodland"
+)
 
 # Loop through each patch
 for (i in 1:nrow(patch_summary_df)) {
@@ -2536,7 +3085,7 @@ for (i in 1:nrow(patch_summary_df)) {
   
   # Pivot all RF_postX_veg and RF_pre_veg to long format
   veg_spatial <- df_patch %>%
-    select(x, y, starts_with("RF_post"), RF_pre_veg) %>%
+    dplyr::select(x, y, starts_with("RF_post"), RF_pre_veg) %>%
     pivot_longer(cols = starts_with("RF_"), names_to = "year_label", values_to = "veg_class") %>%
     mutate(
       rel_year = ifelse(year_label == "RF_pre_veg", 0,
@@ -2546,26 +3095,55 @@ for (i in 1:nrow(patch_summary_df)) {
     filter(!is.na(veg_class))
   
   # Plot faceted tile map
-  p <- ggplot(veg_spatial, aes(x = x, y = y, fill = veg_class)) +
-    geom_tile() +
-    scale_fill_manual(values = veg_colors, na.translate = FALSE) +
-    coord_equal() +
-    facet_wrap(~ rel_year) +
-    labs(
-      title = paste("Vegetation Structure Over Time\nFire", fire_id, "Patch", patch_id),
-      fill = "Veg Class"
-    ) +
-    theme_bw() +
-    theme(
-      axis.text = element_blank(),
-      axis.ticks = element_blank(),
-      panel.grid = element_blank(),
-      strip.text = element_text(size = 10, face = "bold")
-    )
+p <- ggplot(veg_spatial, aes(x = x, y = y, fill = veg_class)) +
+  geom_tile() +
+  scale_fill_manual(
+    values = veg_colors,
+    labels = veg_labels,
+    na.translate = FALSE
+  ) +
+  coord_equal() +
+  facet_wrap(~ rel_year, ncol = 11) +   # <-- fixed number of columns
+  labs(
+    title = paste("Vegetation over time\nFire", fire_id, "Patch", patch_id),
+    x     = NULL,                      # <-- no x-axis label
+    y     = NULL,                      # <-- no y-axis label
+    fill  = "Vegetation class"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text   = element_blank(),
+    axis.ticks  = element_blank(),
+    axis.title  = element_blank(),     # (belt-and-braces: also kill any axis titles)
+    panel.grid  = element_blank(),
+     panel.background = element_rect(fill = "white", colour = "grey"),
+  panel.border     = element_rect(fill = NA, colour = "grey", size = 0.5),
+    strip.background = element_rect(fill = "lightgrey", color = "grey"),
+    strip.text  = element_text(size = 10, face = "bold", color = 'black'),
+  legend.position = 'bottom'
+  )
+
   
   # Save map
-  out_file <- paste0(here(),"/Data/patch_veg_map/veg_patch_map_fire", fire_id, "_patch", patch_id, ".png")
-  ggsave(out_file, plot = p, width = 10, height = 6, dpi = 300)
+  
+#   ggsave(
+#   filename  = paste0(here(),"/Figures/Poster BES/Patches veg maps/",fire_id, "_patch", patch_id, ".emf"),
+#   plot      = p,
+#   device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Arial", ...),
+#   width     = 8.27, height = 4.5, units = "in",
+#   bg        = "white",
+#   limitsize = FALSE
+# )
+
+
+ggsave(
+  filename = paste0(here(),"/Figures/Poster BES/Patches veg maps/",fire_id, "_patch", patch_id, ".pdf"),
+  plot     = p,
+  device   = cairo_pdf,        # vector PDF with good font support
+  width    = 8.27, height = 4.5, units = "in",
+  bg       = "white",
+  limitsize = FALSE
+)
 }
 
 ```
@@ -2582,15 +3160,15 @@ library(fs)
 library(grid)
 
 # Fire/Patch selection
-# selected_patches <- data.frame(
-#   fire_id = c(7514, 7242, 7514),
-#   patch_id = c(3512, 3158, 3902)
-# )
-
 selected_patches <- data.frame(
-  fire_id = c(10273, 10273, 10498),
-  patch_id = c(3647, 3692, 3279)
+  fire_id = c(7514, 7242, 7514),
+  patch_id = c(3512, 3158, 3902)
 )
+
+# selected_patches <- data.frame(
+#   fire_id = c(10273, 10273, 10498),
+#   patch_id = c(3647, 3692, 3279)
+# )
 
 # Just before the join
 selected_patches$fire_id <- as.integer(selected_patches$fire_id)
@@ -2664,7 +3242,7 @@ for (i in 1:nrow(selected_patches)) {
       x = "Years since fire",
       y = NULL
     ) +
-    #xlim(-1, 23) +
+    xlim(-1, 23) +
     theme_classic(base_size = 12) +
     theme(
       plot.title = element_text(hjust = 0.5),
@@ -2727,6 +3305,14 @@ final_plot <- plot_grid(
 print(final_plot)
 
 
+  ggsave(
+  filename  = paste0(here(),"/Figures/Poster BES/patch_examples.emf"),
+  plot      = final_plot,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Calibri", ...),
+  width     = 8.27, height = 2.5, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
 
 ```
 
@@ -2759,6 +3345,65 @@ fire_patch_map <- ggplot(df, aes(x = x, y = y)) +
 
 
 ```
+
+
+```{r}
+# For all patches
+library(data.table)
+library(ggplot2)
+library(ggspatial)  # for annotation_scale
+library(fs)
+library(here)
+
+data_path <- paste0(here(), "/Data/raster_df_mega")
+
+for (i in 1:nrow(patch_summary_df)) {
+  
+  fire_id  <- patch_summary_df$fire_id[i]
+  patch_id <- patch_summary_df$id[i]
+  
+  df_file <- file.path(data_path, paste0(fire_id, ".csv"))
+  if (!file_exists(df_file)) next
+  
+  df <- fread(df_file)
+  
+  fire_patch_map <- ggplot(df, aes(x = x, y = y)) +
+    geom_point(color = "grey80", size = 0.4) +
+    geom_point(data = df[id == patch_id], color = "black", size = 0.4) +
+    coord_fixed() +
+    theme_void() +
+    labs(title = "") +
+    annotation_scale(
+      location  = "bl",
+      width_hint = 0.2,
+      text_cex   = 0.6,
+      line_width = 0.7
+    )
+  
+  # Save one map per patch
+  out_base <- paste0(here(), "/Figures/Poster BES/Fire patch maps/fire", fire_id, "_patch", patch_id)
+  
+  # ggsave(
+  #   filename  = paste0(out_base, ".pdf"),
+  #   plot      = fire_patch_map,
+  #   device    = cairo_pdf,
+  #   width     = 4, height = 4, units = "in",
+  #   bg        = "white"
+  # )
+  
+    ggsave(
+  filename  = paste0(out_base,".emf"),
+  plot      = fire_patch_map,
+  device    = function(filename, ...) devEMF::emf(filename, emfPlus = TRUE, family = "Calibri", ...),
+  width     = 4, height = 4, units = "in",
+  bg        = "white",
+  limitsize = FALSE
+)
+  
+}
+
+```
+
 
 
 # Sankey plot of all fires pre-, 3 post and 20 yrs post-fire
@@ -3289,7 +3934,7 @@ faceted_plot_severity <- ggplot(df_plot, aes(x = year, y = proportion, fill = ve
 
 ```{r split-by-planted-not-planted-chunk2}
 ########################## veg classification time series faceted by burn severity class #########################
-# Size for exporting plots: 1050-830
+
 # 7808- Storrie Fire 2000
 # 9724- Campbell Fire 1990
 # 7412- McNally Fire 2002
