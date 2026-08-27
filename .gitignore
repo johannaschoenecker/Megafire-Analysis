@@ -1,8 +1,11 @@
 # ignore big / derived stuff
+# NOTE: git on Windows matches case-insensitively (core.ignorecase=true), so
+# any pattern here that differs only in case from a real tracked folder will
+# silently swallow it too. There is no "Scripts/" folder any more (consolidated
+# into scripts/, which IS tracked) -- do not add a same-named-but-cased pattern.
 Data/
 Outputs/
 Figures/
-Scripts/
 *.tif
 *.tiff
 *.zip
@@ -14,3 +17,4 @@ Scripts/
 *.jp2
 *.nc
 .Rproj.user
+.Rhistory
