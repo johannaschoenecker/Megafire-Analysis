@@ -1,6 +1,6 @@
 # Analysis of megafires in the Sierra Nevada from 1985 to 2023
 
-This repository contains the R scripts and Google Earth Engine scripts (`.txt`) used to compile the dataset and conduct the analyses for the project **"[Manuscript title placeholder]"**.
+This repository contains the R scripts and Google Earth Engine scripts (`.txt`) used to compile the dataset and conduct the analyses for the project **"Persistent forest-to-shrub transitions after stand-replacing megafires driven by burn patch size, topography and climate"**.
 
 ## Overview
 
@@ -100,8 +100,6 @@ source(here::here("run_all_figures.R"))
 
 ## Scripts
 
-Each script begins with a header describing its function; a summary is given below.
-
 ### Google Earth Engine preprocessing
 
 | Script | Description | Outputs |
@@ -136,7 +134,7 @@ Each script begins with a header describing its function; a summary is given bel
 | `scripts/fig4_dominant_class_panels.R` | **Fig 4** — Three-panel figure of the dominant vegetation class 20 yr post-fire: (a) frequency across all patches, (b) patch sizes by dominant class, (c) proportion of patches by dominant class across size classes. | `Figures/fig4_dominant_class_panels.{pdf,svg,png}`. |
 | `scripts/fig4_panelB_stats.R` | Kruskal-Wallis + Dunn's post-hoc (Benjamini-Hochberg corrected) significance testing for Fig 4b's patch-size-by-dominant-class comparison. | `Data/figure_cache/fig4_panelB_dunn_test.csv`. |
 | `scripts/fig5_ale_importance.R` | **Fig 5** — Accumulated Local Effects (ALE) plots of the top 8 predictors of 20-year pixel-level conifer recovery, with relative variable importance shown as an embedded slider in each panel. | `Figures/fig5_ale_importance.{pdf,svg,png}`. |
-| `scripts/fig6_recovery_mirror.R` | **Fig 6** — Mirrored bar chart of annual stand-replacing conifer area by observed (pre-2004 fires) vs. RF-predicted (2004-2023 fires) 20-year recovery outcome, plus a scatter/trend of the proportion not returned. | `Figures/fig6_recovery_mirror.{pdf,svg,png}`. |
+| `scripts/fig6_recovery_mirror.R` | **Fig 6** — Mirrored bar chart of annual stand-replacing conifer area by observed (pre-2004 fires) vs. RF-predicted (2004-2023 fires) 20-year recovery outcome, plus a scatter/trend of the proportion not returned. Saves two variants; `fig6_recovery_twopanel` (a/b split) is the one used in the manuscript. | `Figures/fig6_recovery_mirror.{pdf,svg,png}`, `Figures/fig6_recovery_twopanel.{pdf,svg,png}`. |
 | `scripts/supp_landscape_metrics.R` | **Supplementary** — Post-fire annual mean values of four landscape metrics (AWMPS, ENN, shape index, total core area) for the stand-replacing burn patches that have failed to return to conifer forest in each year, per fire. | `Figures/supp_landscape_metrics.{pdf,svg,png}`. |
 | `scripts/supp_ale_interaction.R` | **Supplementary** — 2D ALE interaction between distance to seed source and post-fire precipitation. | `Figures/supp_ale_interaction.{pdf,svg}`, `Figures/supp_ale_interaction_density.{pdf,svg}`. |
 | `scripts/supp_variable_importance.R` | **Supplementary** — Full impurity-based variable importance ranking (all predictors, not just the top 8 shown in Fig 5). | `Figures/supp_variable_importance.{pdf,svg}`. |

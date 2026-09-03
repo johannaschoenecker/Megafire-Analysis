@@ -14,7 +14,10 @@
 #                                                scripts/05_predict_rf.R)
 #   Data/raster_df_mega_repeated_planting/*.csv (raw pixel data, for observed
 #                                                outcomes on older fires)
-# Output: Figures/fig6_recovery_mirror.{pdf,svg,png}
+# Output: Figures/fig6_recovery_mirror.{pdf,svg,png}   (single mirrored-bar plot)
+#         Figures/fig6_recovery_twopanel.{pdf,svg,png} (a/b two-panel version --
+#                                                        this is the one used as
+#                                                        Fig 6 in the manuscript)
 # ============================================================================
 
 source(here::here("scripts", "00_setup.R"))

@@ -60,15 +60,30 @@ predict_in_batches <- function(model, newdata, batch = 100000, threads = 2) {
 # -------------------------------------------------------------------
 # Step 3 - Process each fire one at a time: read, filter, predict
 # -------------------------------------------------------------------
-younger_results <- rbindlist(lapply(younger_files, function(f) {
+# Per-fire checkpointing: on a memory-constrained machine, predicting on
+# every fire in one process can get killed partway through (some per-fire
+# CSVs here are >1GB). Each fire's result is written out immediately and
+# skipped on re-run if already present, so the script can simply be re-run
+# after an interruption instead of losing all prior progress.
+checkpoint_dir <- here("Data", "predicted_recovery_checkpoints")
+dir.create(checkpoint_dir, showWarnings = FALSE)
+
+for (f in younger_files) {
 
   fire_id <- as.numeric(str_extract(basename(f), "\\d+"))
+  ckpt_file <- file.path(checkpoint_dir, paste0(fire_id, ".csv"))
+  if (file.exists(ckpt_file)) next
+
+  cat(sprintf("[%s] fire %d (%.1f MB) ...\n", format(Sys.time(), "%H:%M:%S"), fire_id, file.size(f) / 1e6))
 
   # Read only needed columns, then filter to stand-replacing conifer pixels
   d <- fread(f, select = needed_cols)
   d <- d[RF_pre_veg == 7 & transitioned == 1 &
            reburn_20yrs == 0 & tree_planting == 0]
-  if (nrow(d) == 0) return(NULL)
+  if (nrow(d) == 0) {
+    fwrite(data.table(), ckpt_file)  # mark as done, no rows
+    next
+  }
 
   # Compute years_since_fire (as in training)
   d[, years_since_fire := fire_year - previous_fire_year]
@@ -78,7 +93,11 @@ younger_results <- rbindlist(lapply(younger_files, function(f) {
   pred_input <- d[, ..vars_to_keep]
   ok <- complete.cases(pred_input)
   pred_input <- pred_input[ok]
-  if (nrow(pred_input) == 0) return(NULL)
+  if (nrow(pred_input) == 0) {
+    fwrite(data.table(), ckpt_file)
+    rm(d, pred_input); gc()
+    next
+  }
 
   # Predict in batches
   prob_return <- predict_in_batches(rf_model_class, pred_input,
@@ -91,9 +110,17 @@ younger_results <- rbindlist(lapply(younger_files, function(f) {
     pred_input   # the predictor values for these pixels
   )
 
-  rm(d, pred_input); gc()
-  result
-}), fill = TRUE)
+  fwrite(result, ckpt_file)
+  rm(d, pred_input, result); gc()
+}
+
+# -------------------------------------------------------------------
+# Step 3b - Combine per-fire checkpoints into the final output
+# -------------------------------------------------------------------
+younger_results <- rbindlist(
+  lapply(list.files(checkpoint_dir, pattern = "\\.csv$", full.names = TRUE), fread),
+  fill = TRUE
+)
 
 fwrite(younger_results, here("Data", "predicted_recovery.csv"))
 
